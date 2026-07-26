@@ -1,0 +1,6 @@
+.idea/
+.pnpm-store/
+tmp/
+node_modules/
+.DS_Store
+*.log
