@@ -1,3 +1,4 @@
+import asyncio
 import base64
 from functools import partial
 
@@ -59,6 +60,88 @@ evidence. Do not ask a follow-up question, and do not add "but can you also...".
 
 End your message with exactly one line, and nothing after it:
 VERDICT: CONCEDE"""
+
+PROVIDER_MAX_ATTEMPTS = 3
+PROVIDER_RETRY_DELAYS = (0.25, 0.75)
+_TRANSIENT_STATUS_CODES = {408, 409, 429, 500, 502, 503, 504}
+_TRANSIENT_ERROR_NAMES = {
+    "APIConnectionError",
+    "APITimeoutError",
+    "InternalServerError",
+    "RateLimitError",
+    "ServerError",
+    "ServiceUnavailable",
+}
+
+
+def _is_transient_provider_error(error: Exception) -> bool:
+    """Return whether an AI-provider failure is safe to retry briefly."""
+    status_code = getattr(error, "status_code", None)
+    if status_code is None:
+        response = getattr(error, "response", None)
+        status_code = getattr(response, "status_code", None)
+    return status_code in _TRANSIENT_STATUS_CODES or type(error).__name__ in _TRANSIENT_ERROR_NAMES
+
+
+def _is_retryable_provider_error(error: Exception) -> bool:
+    """Rate limits should fail over immediately instead of retrying the same provider."""
+    status_code = getattr(error, "status_code", None)
+    if status_code is None:
+        response = getattr(error, "response", None)
+        status_code = getattr(response, "status_code", None)
+    return _is_transient_provider_error(error) and status_code != 429 and type(error).__name__ != "RateLimitError"
+
+
+def _is_rate_limit_error(error: Exception) -> bool:
+    status_code = getattr(error, "status_code", None)
+    if status_code is None:
+        response = getattr(error, "response", None)
+        status_code = getattr(response, "status_code", None)
+    return status_code == 429 or type(error).__name__ == "RateLimitError"
+
+
+async def _run_provider_with_retry(call) -> tuple[str, str, str]:
+    for attempt in range(PROVIDER_MAX_ATTEMPTS):
+        try:
+            return await run_in_threadpool(call)
+        except Exception as error:
+            if attempt == PROVIDER_MAX_ATTEMPTS - 1 or not _is_retryable_provider_error(error):
+                raise
+            await asyncio.sleep(PROVIDER_RETRY_DELAYS[attempt])
+    raise RuntimeError("AI provider retry loop exited unexpectedly")
+
+
+def _available_providers() -> list[str]:
+    settings = get_settings()
+    keys = {
+        "gemini": settings.gemini_api_key,
+        "groq": settings.groq_api_key,
+        "openai": settings.openai_api_key,
+    }
+    return [settings.ai_provider] + [
+        name for name in ("gemini", "groq", "openai")
+        if name != settings.ai_provider and keys[name]
+    ]
+
+
+async def _run_provider_with_fallback(call_factory) -> tuple[str, str, str]:
+    last_error: Exception | None = None
+    failures: list[Exception] = []
+    for provider_name in _available_providers():
+        try:
+            return await _run_provider_with_retry(call_factory(provider_name))
+        except Exception as error:
+            last_error = error
+            failures.append(error)
+            if not _is_transient_provider_error(error):
+                raise
+    assert last_error is not None
+    if failures and all(_is_rate_limit_error(error) for error in failures):
+        raise AppError(
+            "The AI service has reached its usage limit. Please try again later or contact the administrator.",
+            429,
+        ) from last_error
+    raise last_error
 
 
 def build_sparring_input(
@@ -129,9 +212,10 @@ STUDENT QUESTION
 {question}"""
 
 
-def _generate_sync(instructions: str, prompt: str) -> tuple[str, str, str]:
+def _generate_sync(instructions: str, prompt: str, provider_name: str | None = None) -> tuple[str, str, str]:
     settings = get_settings()
-    if settings.ai_provider == "openai":
+    selected_provider = provider_name or settings.ai_provider
+    if selected_provider == "openai":
         if not settings.openai_api_key:
             raise AppError("OPENAI_API_KEY is not configured", 503)
         from openai import OpenAI
@@ -139,7 +223,7 @@ def _generate_sync(instructions: str, prompt: str) -> tuple[str, str, str]:
             model=settings.openai_model, instructions=instructions, input=prompt
         )
         return response.output_text, "openai", settings.openai_model
-    if settings.ai_provider == "groq":
+    if selected_provider == "groq":
         if not settings.groq_api_key:
             raise AppError("GROQ_API_KEY is not configured", 503)
         from groq import Groq
@@ -164,7 +248,9 @@ def _generate_sync(instructions: str, prompt: str) -> tuple[str, str, str]:
 
 
 async def generate(prompt: str, instructions: str = INSTRUCTIONS) -> tuple[str, str, str]:
-    return await run_in_threadpool(partial(_generate_sync, instructions, prompt))
+    return await _run_provider_with_fallback(
+        lambda provider_name: partial(_generate_sync, instructions, prompt, provider_name)
+    )
 
 
 def build_image_input(
@@ -185,9 +271,13 @@ STUDENT QUESTION (about the attached image)
 {question.strip() or "Please explain what's shown in this image."}"""
 
 
-def _generate_with_image_sync(instructions: str, prompt: str, image_bytes: bytes, mime_type: str) -> tuple[str, str, str]:
+def _generate_with_image_sync(
+    instructions: str, prompt: str, image_bytes: bytes, mime_type: str,
+    provider_name: str | None = None,
+) -> tuple[str, str, str]:
     settings = get_settings()
-    if settings.ai_provider == "openai":
+    selected_provider = provider_name or settings.ai_provider
+    if selected_provider == "openai":
         if not settings.openai_api_key:
             raise AppError("OPENAI_API_KEY is not configured", 503)
         from openai import OpenAI
@@ -204,7 +294,7 @@ def _generate_with_image_sync(instructions: str, prompt: str, image_bytes: bytes
             }],
         )
         return response.output_text, "openai", settings.openai_model
-    if settings.ai_provider == "groq":
+    if selected_provider == "groq":
         if not settings.groq_api_key:
             raise AppError("GROQ_API_KEY is not configured", 503)
         from groq import Groq
@@ -235,4 +325,8 @@ def _generate_with_image_sync(instructions: str, prompt: str, image_bytes: bytes
 async def generate_with_image(
     prompt: str, image_bytes: bytes, mime_type: str, instructions: str = IMAGE_CHAT_INSTRUCTIONS
 ) -> tuple[str, str, str]:
-    return await run_in_threadpool(partial(_generate_with_image_sync, instructions, prompt, image_bytes, mime_type))
+    return await _run_provider_with_fallback(
+        lambda provider_name: partial(
+            _generate_with_image_sync, instructions, prompt, image_bytes, mime_type, provider_name
+        )
+    )

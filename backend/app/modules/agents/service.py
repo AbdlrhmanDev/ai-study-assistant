@@ -54,6 +54,22 @@ AGENT_LABELS = {
 }
 VALID_AGENTS = set(AGENT_LABELS) - {"orchestrator"}
 
+_LOCAL_AGENT_PATTERNS = (
+    ("exam_generator", (r"\bexam\b", r"\btest me\b", r"\btimed test\b", r"اختبار شامل", r"امتحان")),
+    ("quiz_generator", (r"\bquiz(?:zes)?\b", r"\bpractice questions?\b", r"كويز", r"أسئلة تدريب")),
+    ("flashcard_generator", (r"\bflashcards?\b", r"\bstudy cards?\b", r"بطاقات", r"فلاش كارد")),
+    ("planner", (r"\bstudy plan\b", r"\bschedule\b", r"\bwhat should i study\b", r"خطة", r"جدول")),
+    ("researcher", (r"\bresearch\b", r"\bsources?\b", r"\bcitations?\b", r"بحث", r"مصادر")),
+)
+
+
+def _classify_locally(message: str) -> tuple[str, str]:
+    normalized = message.casefold()
+    for agent, patterns in _LOCAL_AGENT_PATTERNS:
+        if any(re.search(pattern, normalized) for pattern in patterns):
+            return agent, f"Routed to {AGENT_LABELS[agent]} using local intent matching."
+    return "tutor", "Routed to Tutor using local intent matching."
+
 
 def _extract_json_object(raw: str) -> dict:
     text = raw.strip()
@@ -77,10 +93,10 @@ async def _classify(message: str) -> tuple[str, str]:
         agent = parsed.get("agent")
         reasoning = str(parsed.get("reasoning") or "").strip()[:300]
         if agent not in VALID_AGENTS:
-            return "tutor", "Defaulted to the tutor -- the request didn't clearly match a specialist."
+            return _classify_locally(message)
         return agent, reasoning or f"Classified as {AGENT_LABELS[agent]}."
     except Exception:
-        return "tutor", "Classification was unavailable -- defaulted to the tutor."
+        return _classify_locally(message)
 
 
 async def _run_tutor(db: AsyncSession, user_id: int, topic_id: int, message: str) -> tuple[str, str | None]:

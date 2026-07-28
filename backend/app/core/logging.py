@@ -13,6 +13,13 @@ from .config import get_settings
 
 REDACT_KEYS = {"password", "password_hash", "authorization", "cookie"}
 REDACTED = "[REDACTED]"
+NOISY_THIRD_PARTY_LOGGERS = (
+    "groq",
+    "httpx",
+    "httpcore",
+    "openai",
+    "google_genai",
+)
 
 SECURITY_HEADERS = {
     "X-Content-Type-Options": "nosniff",
@@ -73,6 +80,12 @@ def configure_logging() -> None:
     root_logger = logging.getLogger()
     root_logger.handlers = [handler]
     root_logger.setLevel(level)
+
+    # Provider SDKs log handled HTTP failures (notably 429 failover) with full
+    # tracebacks at DEBUG. Keep application debug logs useful without making an
+    # expected provider fallback look like an unhandled server crash.
+    for logger_name in NOISY_THIRD_PARTY_LOGGERS:
+        logging.getLogger(logger_name).setLevel(logging.WARNING)
 
 
 logger = structlog.get_logger("study_assistant")
