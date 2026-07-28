@@ -1,56 +1,62 @@
-# Backend production checklist
+# FastAPI production checklist
 
 ## Required environment
 
-Set `NODE_ENV=production` and provide `DATABASE_URL`, `CLIENT_ORIGIN`,
-`SESSION_SECRET`, the selected `AI_PROVIDER`, and its API key. The server
-refuses to start when required production values are missing.
+Set `NODE_ENV=production` and provide `DATABASE_URL`, `CLIENT_ORIGINS`,
+`SESSION_SECRET`, the selected `AI_PROVIDER` and its API key, and the
+selected `EMBEDDING_PROVIDER` and its API key (independent from
+`AI_PROVIDER` -- Groq has no embeddings API). Use a random `SESSION_SECRET`
+containing at least 32 characters and serve the API over HTTPS.
 
-Use a random `SESSION_SECRET` containing at least 32 characters. Serve the API
-over HTTPS because production session cookies are secure and use the
-`__Host-sid` prefix.
-
-Set `DATABASE_SSL=true` when required by the PostgreSQL provider.
+The **pgvector** Postgres extension must be installed on the database server
+before running migrations (`CREATE EXTENSION IF NOT EXISTS vector` is part
+of the migration, but the extension binary itself has to already be present
+on the server -- most managed Postgres providers support it via an
+allowlist; self-hosted Postgres needs it built/installed manually).
 
 ## Health checks
 
 - Liveness: `GET /health`
 - Readiness (checks PostgreSQL): `GET /health/ready`
 
-Configure the hosting platform to use the readiness endpoint before routing
-traffic to a new instance.
+Configure the hosting platform to use readiness before routing traffic to a new
+instance.
 
-## Rate limits
+## Security and operations
 
-The built-in limits are suitable for one backend process:
+The app enforces its own rate limits in-process (general API, auth, and AI
+tiers -- see `app/core/security.py`); these use in-memory counters, so they
+reset per instance and don't coordinate across multiple replicas. Put a
+shared rate limiter in front (API gateway or a Redis-backed limiter) if you
+run more than one instance and need a single global limit. Forward
+stdout/stderr to the hosting platform's logs (JSON in production, with
+password/cookie/authorization fields redacted). Every response includes
+`X-Request-Id`.
 
-- `API_RATE_LIMIT` per IP per 15 minutes
-- `AUTH_RATE_LIMIT` failed authentication requests per IP per 15 minutes
-- `AI_RATE_LIMIT` requests per authenticated user per hour
+Run `alembic upgrade head` before a new release (the provided `Dockerfile`
+does this automatically on container start). Enable automated PostgreSQL
+backups and test restore procedures.
 
-For multiple backend instances, replace the in-memory rate-limit store with a
-shared Redis or PostgreSQL store.
+Sessions are stored server-side in the `user_sessions` table; there's nothing
+to migrate off of, but note that dropping/truncating that table logs every
+user out.
 
-## Logging
-
-Logs are structured JSON. Forward stdout/stderr to the hosting platform's log
-collector. Every response includes `X-Request-Id`; use it to find the matching
-request log. Credentials, cookies, and password fields are redacted.
-
-## Database operations
-
-Run migrations before starting a new release:
-
-```bash
-npm run db:migrate
-```
-
-Enable automated PostgreSQL backups with the hosting provider and test restore
-procedures regularly. Keep database credentials in the platform's secret
-manager, never in source control.
+Uploaded documents are written to local disk (`UPLOAD_DIR`, `STORAGE_BACKEND=local`)
+alongside their extracted text and embeddings in Postgres. Local disk storage
+does **not** survive across replicas or ephemeral container restarts --
+either pin uploads to a single persistent-disk instance, or implement an
+object-storage `StorageBackend` (see `app/modules/ai/storage.py`) before
+running more than one instance or a platform with ephemeral filesystems.
 
 ## Deployment
 
-Use a rolling or blue/green deployment. The server handles `SIGTERM` and
-`SIGINT`, stops accepting traffic, closes PostgreSQL connections, and exits
-after active requests finish or the shutdown timeout is reached.
+Build and run the provided `Dockerfile`, or run directly with an ASGI process
+manager:
+
+```bash
+alembic upgrade head
+uvicorn app.main:app --host 0.0.0.0 --port 5000 --workers 2
+```
+
+Use a rolling or blue/green deployment. FastAPI's lifespan disposes the
+SQLAlchemy connection pool during shutdown.

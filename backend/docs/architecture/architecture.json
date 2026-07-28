@@ -1,0 +1,1695 @@
+{
+  "meta": {
+    "displayName": "Ai Study Assistant Backend",
+    "version": "1.0.0",
+    "description": "Ai Study Assistant Backend Architecture & API Map",
+    "generatedAt": "2026-07-28",
+    "techStack": {
+      "language": "Python",
+      "framework": "FastAPI",
+      "database": "PostgreSQL",
+      "auth": "JWT / Bearer Token"
+    }
+  },
+  "workspaces": [
+    {
+      "id": "api",
+      "name": "api",
+      "type": "backend",
+      "description": "Main REST API",
+      "port": 3000,
+      "entrypoint": "src/index.ts"
+    }
+  ],
+  "infrastructure": [],
+  "dockerDiagram": {
+    "description": "",
+    "nodes": [],
+    "edges": []
+  },
+  "systemArchitectureDiagram": {
+    "description": "System architecture and component relationships.",
+    "subgraphs": [
+      {
+        "id": "client_layer",
+        "label": "Client Layer",
+        "nodes": [
+          {
+            "id": "web_client",
+            "label": "Web / Mobile Client",
+            "type": "app"
+          }
+        ]
+      },
+      {
+        "id": "api_layer",
+        "label": "API Layer",
+        "nodes": [
+          {
+            "id": "api_server",
+            "label": "REST API Server",
+            "type": "app"
+          }
+        ]
+      },
+      {
+        "id": "data_layer",
+        "label": "Data & Storage Layer",
+        "nodes": [
+          {
+            "id": "db",
+            "label": "PostgreSQL Database",
+            "type": "database"
+          }
+        ]
+      }
+    ],
+    "edges": [
+      {
+        "from": "web_client",
+        "to": "api_server",
+        "label": "HTTPS REST"
+      },
+      {
+        "from": "api_server",
+        "to": "db",
+        "label": "Query"
+      }
+    ]
+  },
+  "swaggerSchemas": {
+    "matchStatus": "Verified Parity (52/52 Endpoints)",
+    "openapi": "3.0.0",
+    "servedAt": "/api/docs",
+    "securityScheme": "bearerAuth (JWT Bearer Token)",
+    "servers": [
+      {
+        "url": "http://localhost:3000",
+        "description": "Local Development Server"
+      },
+      {
+        "url": "https://api.ai-study-assistant-backend.com",
+        "description": "Production"
+      }
+    ],
+    "schemas": []
+  },
+  "modules": [
+    {
+      "id": "main",
+      "name": "Main",
+      "basePath": "",
+      "description": "Main API \u2014 2 endpoint(s)",
+      "color": "#ec4899",
+      "icon": "\ud83d\udcc1",
+      "files": [
+        "main.py"
+      ],
+      "permissions": [],
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/health",
+          "auth": false,
+          "permission": null,
+          "description": "List all main"
+        },
+        {
+          "method": "GET",
+          "path": "/health/ready",
+          "auth": false,
+          "permission": null,
+          "description": "Get main \u2014 ready"
+        }
+      ]
+    },
+    {
+      "id": "ai",
+      "name": "Ai",
+      "basePath": "/api/v1",
+      "description": "Ai API \u2014 7 endpoint(s)",
+      "color": "#8b5cf6",
+      "icon": "\ud83d\udcc1",
+      "files": [
+        "router.py"
+      ],
+      "permissions": [],
+      "endpoints": [
+        {
+          "method": "POST",
+          "path": "/topics/{topic_id}/ai/chat",
+          "auth": false,
+          "permission": null,
+          "description": "Post ai \u2014 chat"
+        },
+        {
+          "method": "GET",
+          "path": "/topics/{topic_id}/ai/messages",
+          "auth": false,
+          "permission": null,
+          "description": "Get ai \u2014 messages"
+        },
+        {
+          "method": "DELETE",
+          "path": "/topics/{topic_id}/ai/messages",
+          "auth": false,
+          "permission": null,
+          "description": "Delete ai \u2014 messages"
+        },
+        {
+          "method": "POST",
+          "path": "/topics/{topic_id}/documents",
+          "auth": false,
+          "permission": null,
+          "description": "Post ai \u2014 documents"
+        },
+        {
+          "method": "GET",
+          "path": "/topics/{topic_id}/documents",
+          "auth": false,
+          "permission": null,
+          "description": "Get ai \u2014 documents"
+        },
+        {
+          "method": "GET",
+          "path": "/documents/{document_id}",
+          "auth": false,
+          "permission": null,
+          "description": "Get ai by ID"
+        },
+        {
+          "method": "DELETE",
+          "path": "/documents/{document_id}",
+          "auth": false,
+          "permission": null,
+          "description": "Delete ai by ID"
+        }
+      ]
+    },
+    {
+      "id": "auth",
+      "name": "Auth",
+      "basePath": "/auth",
+      "description": "Auth API \u2014 5 endpoint(s)",
+      "color": "#6366f1",
+      "icon": "\ud83d\udd10",
+      "files": [
+        "router.py"
+      ],
+      "permissions": [],
+      "endpoints": [
+        {
+          "method": "POST",
+          "path": "/register",
+          "auth": true,
+          "permission": null,
+          "description": "Create auth"
+        },
+        {
+          "method": "POST",
+          "path": "/login",
+          "auth": true,
+          "permission": null,
+          "description": "Create auth"
+        },
+        {
+          "method": "POST",
+          "path": "/logout",
+          "auth": true,
+          "permission": null,
+          "description": "Create auth"
+        },
+        {
+          "method": "GET",
+          "path": "/me",
+          "auth": true,
+          "permission": null,
+          "description": "List all auth"
+        },
+        {
+          "method": "PATCH",
+          "path": "/me",
+          "auth": true,
+          "permission": null,
+          "description": "PATCH /me"
+        }
+      ]
+    },
+    {
+      "id": "flashcards",
+      "name": "Flashcards",
+      "basePath": "/api/v1",
+      "description": "Flashcards API \u2014 12 endpoint(s)",
+      "color": "#3b82f6",
+      "icon": "\ud83d\udcc1",
+      "files": [
+        "router.py"
+      ],
+      "permissions": [],
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/topics/{topic_id}/flashcards",
+          "auth": false,
+          "permission": null,
+          "description": "Get flashcards \u2014 flashcards"
+        },
+        {
+          "method": "POST",
+          "path": "/topics/{topic_id}/flashcards",
+          "auth": false,
+          "permission": null,
+          "description": "Post flashcards \u2014 flashcards"
+        },
+        {
+          "method": "POST",
+          "path": "/topics/{topic_id}/flashcards/generate",
+          "auth": false,
+          "permission": null,
+          "description": "Post flashcards \u2014 generate"
+        },
+        {
+          "method": "GET",
+          "path": "/topics/{topic_id}/flashcards/due",
+          "auth": false,
+          "permission": null,
+          "description": "Get flashcards \u2014 due"
+        },
+        {
+          "method": "GET",
+          "path": "/topics/{topic_id}/flashcards/stats",
+          "auth": false,
+          "permission": null,
+          "description": "Get flashcards \u2014 stats"
+        },
+        {
+          "method": "GET",
+          "path": "/flashcards/due",
+          "auth": false,
+          "permission": null,
+          "description": "Get flashcards \u2014 due"
+        },
+        {
+          "method": "GET",
+          "path": "/flashcards/stats-summary",
+          "auth": false,
+          "permission": null,
+          "description": "Get flashcards \u2014 stats summary"
+        },
+        {
+          "method": "PATCH",
+          "path": "/flashcards/{flashcard_id}",
+          "auth": false,
+          "permission": null,
+          "description": "Patch flashcards by ID"
+        },
+        {
+          "method": "PATCH",
+          "path": "/flashcards/{flashcard_id}/archive",
+          "auth": false,
+          "permission": null,
+          "description": "Patch flashcards \u2014 archive"
+        },
+        {
+          "method": "POST",
+          "path": "/flashcards/{flashcard_id}/review",
+          "auth": false,
+          "permission": null,
+          "description": "Post flashcards \u2014 review"
+        },
+        {
+          "method": "POST",
+          "path": "/flashcards/{flashcard_id}/regenerate",
+          "auth": false,
+          "permission": null,
+          "description": "Post flashcards \u2014 regenerate"
+        },
+        {
+          "method": "DELETE",
+          "path": "/flashcards/{flashcard_id}",
+          "auth": false,
+          "permission": null,
+          "description": "Delete flashcards by ID"
+        }
+      ]
+    },
+    {
+      "id": "mastery",
+      "name": "Mastery",
+      "basePath": "/api/v1",
+      "description": "Mastery API \u2014 2 endpoint(s)",
+      "color": "#14b8a6",
+      "icon": "\ud83d\udcc1",
+      "files": [
+        "router.py"
+      ],
+      "permissions": [],
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/topics/{topic_id}/mastery/weak",
+          "auth": false,
+          "permission": null,
+          "description": "Get mastery \u2014 weak"
+        },
+        {
+          "method": "GET",
+          "path": "/topics/{topic_id}/mastery/{concept_id}/history",
+          "auth": false,
+          "permission": null,
+          "description": "Get mastery \u2014 history"
+        }
+      ]
+    },
+    {
+      "id": "notes",
+      "name": "Notes",
+      "basePath": "/api/v1",
+      "description": "Notes API \u2014 8 endpoint(s)",
+      "color": "#8b5cf6",
+      "icon": "\ud83d\udcc1",
+      "files": [
+        "router.py"
+      ],
+      "permissions": [],
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/topics/{topic_id}/notes/paginated",
+          "auth": false,
+          "permission": null,
+          "description": "Get notes \u2014 paginated"
+        },
+        {
+          "method": "GET",
+          "path": "/topics/{topic_id}/notes/search",
+          "auth": false,
+          "permission": null,
+          "description": "Get notes \u2014 search"
+        },
+        {
+          "method": "GET",
+          "path": "/topics/{topic_id}/notes",
+          "auth": false,
+          "permission": null,
+          "description": "Get notes \u2014 notes"
+        },
+        {
+          "method": "POST",
+          "path": "/topics/{topic_id}/notes",
+          "auth": false,
+          "permission": null,
+          "description": "Post notes \u2014 notes"
+        },
+        {
+          "method": "PATCH",
+          "path": "/notes/{note_id}/move",
+          "auth": false,
+          "permission": null,
+          "description": "Patch notes \u2014 move"
+        },
+        {
+          "method": "GET",
+          "path": "/notes/{note_id}",
+          "auth": false,
+          "permission": null,
+          "description": "Get notes by ID"
+        },
+        {
+          "method": "PATCH",
+          "path": "/notes/{note_id}",
+          "auth": false,
+          "permission": null,
+          "description": "Patch notes by ID"
+        },
+        {
+          "method": "DELETE",
+          "path": "/notes/{note_id}",
+          "auth": false,
+          "permission": null,
+          "description": "Delete notes by ID"
+        }
+      ]
+    },
+    {
+      "id": "quizzes",
+      "name": "Quizzes",
+      "basePath": "/api/v1",
+      "description": "Quizzes API \u2014 9 endpoint(s)",
+      "color": "#a855f7",
+      "icon": "\ud83d\udcc1",
+      "files": [
+        "router.py"
+      ],
+      "permissions": [],
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/topics/{topic_id}/quizzes",
+          "auth": false,
+          "permission": null,
+          "description": "Get quizzes \u2014 quizzes"
+        },
+        {
+          "method": "POST",
+          "path": "/topics/{topic_id}/quizzes/generate",
+          "auth": false,
+          "permission": null,
+          "description": "Post quizzes \u2014 generate"
+        },
+        {
+          "method": "GET",
+          "path": "/quizzes/{quiz_id}",
+          "auth": false,
+          "permission": null,
+          "description": "Get quizzes by ID"
+        },
+        {
+          "method": "DELETE",
+          "path": "/quizzes/{quiz_id}",
+          "auth": false,
+          "permission": null,
+          "description": "Delete quizzes by ID"
+        },
+        {
+          "method": "GET",
+          "path": "/quizzes/{quiz_id}/attempts",
+          "auth": false,
+          "permission": null,
+          "description": "Get quizzes \u2014 attempts"
+        },
+        {
+          "method": "POST",
+          "path": "/quizzes/{quiz_id}/attempts",
+          "auth": false,
+          "permission": null,
+          "description": "Post quizzes \u2014 attempts"
+        },
+        {
+          "method": "POST",
+          "path": "/quizzes/attempts/{attempt_id}/answers",
+          "auth": false,
+          "permission": null,
+          "description": "Post quizzes \u2014 answers"
+        },
+        {
+          "method": "POST",
+          "path": "/quizzes/attempts/{attempt_id}/complete",
+          "auth": false,
+          "permission": null,
+          "description": "Post quizzes \u2014 complete"
+        },
+        {
+          "method": "GET",
+          "path": "/quizzes/attempts/{attempt_id}",
+          "auth": false,
+          "permission": null,
+          "description": "Get quizzes \u2014 attempts"
+        }
+      ]
+    },
+    {
+      "id": "study_history",
+      "name": "Study History",
+      "basePath": "/study-history",
+      "description": "Study History API \u2014 2 endpoint(s)",
+      "color": "#f59e0b",
+      "icon": "\ud83d\udcc1",
+      "files": [
+        "router.py"
+      ],
+      "permissions": [],
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/",
+          "auth": false,
+          "permission": null,
+          "description": "List all study history"
+        },
+        {
+          "method": "GET",
+          "path": "/stats",
+          "auth": false,
+          "permission": null,
+          "description": "List all study history"
+        }
+      ]
+    },
+    {
+      "id": "topics",
+      "name": "Topics",
+      "basePath": "/topics",
+      "description": "Topics API \u2014 5 endpoint(s)",
+      "color": "#f97316",
+      "icon": "\ud83d\udcc1",
+      "files": [
+        "router.py"
+      ],
+      "permissions": [],
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/",
+          "auth": false,
+          "permission": null,
+          "description": "List all topics"
+        },
+        {
+          "method": "POST",
+          "path": "/",
+          "auth": false,
+          "permission": null,
+          "description": "Create topics"
+        },
+        {
+          "method": "GET",
+          "path": "/{topic_id}",
+          "auth": false,
+          "permission": null,
+          "description": "Get topics by ID"
+        },
+        {
+          "method": "PATCH",
+          "path": "/{topic_id}",
+          "auth": false,
+          "permission": null,
+          "description": "Patch topics by ID"
+        },
+        {
+          "method": "DELETE",
+          "path": "/{topic_id}",
+          "auth": false,
+          "permission": null,
+          "description": "Delete topics by ID"
+        }
+      ]
+    }
+  ],
+  "systemEndpoints": [
+    {
+      "method": "GET",
+      "path": "/health",
+      "auth": false,
+      "description": "Health check endpoint"
+    }
+  ],
+  "coreLayer": {
+    "security": [
+      {
+        "name": "applications",
+        "file": ".venv/Lib/site-packages/fastapi/applications.py",
+        "description": "Security & Authentication module"
+      },
+      {
+        "name": "param_functions",
+        "file": ".venv/Lib/site-packages/fastapi/param_functions.py",
+        "description": "Security & Authentication module"
+      },
+      {
+        "name": "utils",
+        "file": ".venv/Lib/site-packages/fastapi/dependencies/utils.py",
+        "description": "Security & Authentication module"
+      },
+      {
+        "name": "cors",
+        "file": ".venv/Lib/site-packages/fastapi/middleware/cors.py",
+        "description": "Security & Authentication module"
+      },
+      {
+        "name": "docs",
+        "file": ".venv/Lib/site-packages/fastapi/openapi/docs.py",
+        "description": "Security & Authentication module"
+      },
+      {
+        "name": "models",
+        "file": ".venv/Lib/site-packages/fastapi/openapi/models.py",
+        "description": "Security & Authentication module"
+      },
+      {
+        "name": "oauth2",
+        "file": ".venv/Lib/site-packages/fastapi/security/oauth2.py",
+        "description": "Security & Authentication module"
+      },
+      {
+        "name": "__init__",
+        "file": ".venv/Lib/site-packages/fastapi/security/__init__.py",
+        "description": "Security & Authentication module"
+      }
+    ],
+    "middleware": [
+      {
+        "name": "applications",
+        "file": ".venv/Lib/site-packages/fastapi/applications.py",
+        "description": "HTTP Middleware component (applications.py)",
+        "guards": [
+          "Request Pipeline"
+        ]
+      },
+      {
+        "name": "cors",
+        "file": ".venv/Lib/site-packages/fastapi/middleware/cors.py",
+        "description": "HTTP Middleware component (cors.py)",
+        "guards": [
+          "Request Pipeline"
+        ]
+      },
+      {
+        "name": "gzip",
+        "file": ".venv/Lib/site-packages/fastapi/middleware/gzip.py",
+        "description": "HTTP Middleware component (gzip.py)",
+        "guards": [
+          "Request Pipeline"
+        ]
+      },
+      {
+        "name": "httpsredirect",
+        "file": ".venv/Lib/site-packages/fastapi/middleware/httpsredirect.py",
+        "description": "HTTP Middleware component (httpsredirect.py)",
+        "guards": [
+          "Request Pipeline"
+        ]
+      },
+      {
+        "name": "trustedhost",
+        "file": ".venv/Lib/site-packages/fastapi/middleware/trustedhost.py",
+        "description": "HTTP Middleware component (trustedhost.py)",
+        "guards": [
+          "Request Pipeline"
+        ]
+      },
+      {
+        "name": "wsgi",
+        "file": ".venv/Lib/site-packages/fastapi/middleware/wsgi.py",
+        "description": "HTTP Middleware component (wsgi.py)",
+        "guards": [
+          "Request Pipeline"
+        ]
+      },
+      {
+        "name": "__init__",
+        "file": ".venv/Lib/site-packages/fastapi/middleware/__init__.py",
+        "description": "HTTP Middleware component (__init__.py)",
+        "guards": [
+          "Request Pipeline"
+        ]
+      },
+      {
+        "name": "middleware",
+        "file": ".venv/Lib/site-packages/slowapi/middleware.py",
+        "description": "HTTP Middleware component (middleware.py)",
+        "guards": [
+          "Request Pipeline"
+        ]
+      },
+      {
+        "name": "authentication",
+        "file": ".venv/Lib/site-packages/starlette/middleware/authentication.py",
+        "description": "HTTP Middleware component (authentication.py)",
+        "guards": [
+          "Request Pipeline"
+        ]
+      },
+      {
+        "name": "base",
+        "file": ".venv/Lib/site-packages/starlette/middleware/base.py",
+        "description": "HTTP Middleware component (base.py)",
+        "guards": [
+          "Request Pipeline"
+        ]
+      }
+    ],
+    "services": [
+      {
+        "name": "models",
+        "file": ".venv/Lib/site-packages/charset_normalizer/models.py",
+        "description": "Data service / Model repository (models.py)",
+        "exports": [
+          "models"
+        ]
+      },
+      {
+        "name": "_models",
+        "file": ".venv/Lib/site-packages/groq/_models.py",
+        "description": "Data service / Model repository (_models.py)",
+        "exports": [
+          "_models"
+        ]
+      },
+      {
+        "name": "all_models",
+        "file": ".venv/Lib/site-packages/openai/types/shared/all_models.py",
+        "description": "Data service / Model repository (all_models.py)",
+        "exports": [
+          "all_models"
+        ]
+      },
+      {
+        "name": "build_html",
+        "file": "docs/architecture/build_html.py",
+        "description": "Data service / Model repository (build_html.py)",
+        "exports": [
+          "build_html"
+        ]
+      }
+    ]
+  },
+  "dataFlow": {
+    "requestPipeline": [
+      {
+        "step": "HTTP request received by ASGI/WSGI server (Uvicorn / Gunicorn)",
+        "detail": "Entry point of the Python application server."
+      },
+      {
+        "step": "Middleware stack processes request (CORS, rate limit, request ID)",
+        "detail": "Starlette / Django middleware chain runs top-to-bottom.",
+        "coreRef": "middleware"
+      },
+      {
+        "step": "Route matched \u2014 endpoint function resolved",
+        "detail": "Path operation matched. Path and query parameters extracted and type-checked."
+      },
+      {
+        "step": "Dependency injection resolved (Depends / auth guards)",
+        "detail": "FastAPI Depends chain runs \u2014 current user fetched, auth token validated.",
+        "coreRef": "security"
+      },
+      {
+        "step": "Request body deserialized and validated (Pydantic / serializers)",
+        "detail": "Schema validation runs. Invalid payloads return 422 before the handler is called."
+      },
+      {
+        "step": "Endpoint handler executes \u2014 business logic runs",
+        "detail": "Service / CRUD functions called. Database session used.",
+        "coreRef": "services"
+      },
+      {
+        "step": "ORM query executed (SQLAlchemy / Django ORM)",
+        "detail": "SQL generated and run against the database. Results mapped to schema models.",
+        "coreRef": "services"
+      },
+      {
+        "step": "JSON response returned to client",
+        "detail": "Pydantic model serialized to JSON. HTTP 200 returned."
+      }
+    ],
+    "errorPipeline": [
+      "Exception raised in handler or service",
+      "Exception handler / middleware intercepts (HTTPException or custom handler)",
+      "Error response structured (detail, status_code)",
+      "HTTP error returned to client (400 / 401 / 403 / 422 / 500)"
+    ],
+    "tenantIsolation": "Request isolation enforced via dependency-injected database sessions and user-scoped queries."
+  },
+  "permissions": {
+    "description": "RBAC permission catalog and endpoint mapping.",
+    "catalog": [],
+    "details": []
+  },
+  "sqlQueries": [
+    {
+      "label": "Get Main Health",
+      "module": "Main",
+      "function": "getMainHealth",
+      "purpose": "Fetch health for Main module",
+      "file": "main.py",
+      "tables": [
+        "health"
+      ],
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/health"
+        }
+      ],
+      "sql": "SELECT * FROM \"health\" ORDER BY created_at DESC;"
+    },
+    {
+      "label": "Get Main Ready",
+      "module": "Main",
+      "function": "getMainReady",
+      "purpose": "Fetch ready for Main module",
+      "file": "main.py",
+      "tables": [
+        "ready"
+      ],
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/health/ready"
+        }
+      ],
+      "sql": "SELECT * FROM \"ready\" ORDER BY created_at DESC;"
+    },
+    {
+      "label": "Create Ai Chat",
+      "module": "Ai",
+      "function": "createAiChat",
+      "purpose": "Insert new chat record linked to Ai",
+      "file": "router.py",
+      "tables": [
+        "chat"
+      ],
+      "endpoints": [
+        {
+          "method": "POST",
+          "path": "/api/v1/topics/{topic_id}/ai/chat"
+        }
+      ],
+      "sql": "INSERT INTO \"chat\" (ai_id, created_at) VALUES ($1, NOW()) RETURNING *;"
+    },
+    {
+      "label": "Find Ai by ID",
+      "module": "Ai",
+      "function": "getAiById",
+      "purpose": "Fetch single Ai record by unique ID",
+      "file": "router.py",
+      "tables": [
+        "messages"
+      ],
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/api/v1/topics/{topic_id}/ai/messages"
+        }
+      ],
+      "sql": "SELECT * FROM \"ais\" WHERE id = $1 LIMIT 1;"
+    },
+    {
+      "label": "Delete Ai Record",
+      "module": "Ai",
+      "function": "deleteAi",
+      "purpose": "Delete record from ais by ID",
+      "file": "router.py",
+      "tables": [
+        "messages"
+      ],
+      "endpoints": [
+        {
+          "method": "DELETE",
+          "path": "/api/v1/topics/{topic_id}/ai/messages"
+        }
+      ],
+      "sql": "DELETE FROM \"ais\" WHERE id = $1;"
+    },
+    {
+      "label": "Create Ai Documents",
+      "module": "Ai",
+      "function": "createAiDocuments",
+      "purpose": "Insert new documents record linked to Ai",
+      "file": "router.py",
+      "tables": [
+        "documents"
+      ],
+      "endpoints": [
+        {
+          "method": "POST",
+          "path": "/api/v1/topics/{topic_id}/documents"
+        }
+      ],
+      "sql": "INSERT INTO \"documents\" (ai_id, created_at) VALUES ($1, NOW()) RETURNING *;"
+    },
+    {
+      "label": "Find Ai by ID",
+      "module": "Ai",
+      "function": "getAiById",
+      "purpose": "Fetch single Ai record by unique ID",
+      "file": "router.py",
+      "tables": [
+        "documents"
+      ],
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/api/v1/topics/{topic_id}/documents"
+        }
+      ],
+      "sql": "SELECT * FROM \"ais\" WHERE id = $1 LIMIT 1;"
+    },
+    {
+      "label": "Find Ai by ID",
+      "module": "Ai",
+      "function": "getAiById",
+      "purpose": "Fetch single Ai record by unique ID",
+      "file": "router.py",
+      "tables": [
+        "documents"
+      ],
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/api/v1/documents/{document_id}"
+        }
+      ],
+      "sql": "SELECT * FROM \"ais\" WHERE id = $1 LIMIT 1;"
+    },
+    {
+      "label": "Delete Ai Record",
+      "module": "Ai",
+      "function": "deleteAi",
+      "purpose": "Delete record from ais by ID",
+      "file": "router.py",
+      "tables": [
+        "documents"
+      ],
+      "endpoints": [
+        {
+          "method": "DELETE",
+          "path": "/api/v1/documents/{document_id}"
+        }
+      ],
+      "sql": "DELETE FROM \"ais\" WHERE id = $1;"
+    },
+    {
+      "label": "Create Auth Register",
+      "module": "Auth",
+      "function": "createAuthRegister",
+      "purpose": "Insert new register record linked to Auth",
+      "file": "router.py",
+      "tables": [
+        "register"
+      ],
+      "endpoints": [
+        {
+          "method": "POST",
+          "path": "/auth/register"
+        }
+      ],
+      "sql": "INSERT INTO \"register\" (auth_id, created_at) VALUES ($1, NOW()) RETURNING *;"
+    },
+    {
+      "label": "Create Auth Login",
+      "module": "Auth",
+      "function": "createAuthLogin",
+      "purpose": "Insert new login record linked to Auth",
+      "file": "router.py",
+      "tables": [
+        "login"
+      ],
+      "endpoints": [
+        {
+          "method": "POST",
+          "path": "/auth/login"
+        }
+      ],
+      "sql": "INSERT INTO \"login\" (auth_id, created_at) VALUES ($1, NOW()) RETURNING *;"
+    },
+    {
+      "label": "Create Auth Logout",
+      "module": "Auth",
+      "function": "createAuthLogout",
+      "purpose": "Insert new logout record linked to Auth",
+      "file": "router.py",
+      "tables": [
+        "logout"
+      ],
+      "endpoints": [
+        {
+          "method": "POST",
+          "path": "/auth/logout"
+        }
+      ],
+      "sql": "INSERT INTO \"logout\" (auth_id, created_at) VALUES ($1, NOW()) RETURNING *;"
+    },
+    {
+      "label": "Get Auth Me",
+      "module": "Auth",
+      "function": "getAuthMe",
+      "purpose": "Fetch me for Auth module",
+      "file": "router.py",
+      "tables": [
+        "me"
+      ],
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/auth/me"
+        }
+      ],
+      "sql": "SELECT * FROM \"me\" ORDER BY created_at DESC;"
+    },
+    {
+      "label": "Update Auth Me",
+      "module": "Auth",
+      "function": "updateAuthMe",
+      "purpose": "Update me attribute on Auth",
+      "file": "router.py",
+      "tables": [
+        "me"
+      ],
+      "endpoints": [
+        {
+          "method": "PATCH",
+          "path": "/auth/me"
+        }
+      ],
+      "sql": "UPDATE \"auths\" SET me = $1, updated_at = NOW() WHERE id = $2 RETURNING *;"
+    },
+    {
+      "label": "Find Flashcards by ID",
+      "module": "Flashcards",
+      "function": "getFlashcardsById",
+      "purpose": "Fetch single Flashcards record by unique ID",
+      "file": "router.py",
+      "tables": [
+        "flashcardss"
+      ],
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/api/v1/topics/{topic_id}/flashcards"
+        }
+      ],
+      "sql": "SELECT * FROM \"flashcardss\" WHERE id = $1 LIMIT 1;"
+    },
+    {
+      "label": "Create New Flashcards",
+      "module": "Flashcards",
+      "function": "createFlashcards",
+      "purpose": "Insert new record into Flashcards table",
+      "file": "router.py",
+      "tables": [
+        "flashcardss"
+      ],
+      "endpoints": [
+        {
+          "method": "POST",
+          "path": "/api/v1/topics/{topic_id}/flashcards"
+        }
+      ],
+      "sql": "INSERT INTO \"flashcardss\" (id, created_at) VALUES ($1, NOW()) RETURNING *;"
+    },
+    {
+      "label": "Create Flashcards Generate",
+      "module": "Flashcards",
+      "function": "createFlashcardsGenerate",
+      "purpose": "Insert new generate record linked to Flashcards",
+      "file": "router.py",
+      "tables": [
+        "generate"
+      ],
+      "endpoints": [
+        {
+          "method": "POST",
+          "path": "/api/v1/topics/{topic_id}/flashcards/generate"
+        }
+      ],
+      "sql": "INSERT INTO \"generate\" (flashcards_id, created_at) VALUES ($1, NOW()) RETURNING *;"
+    },
+    {
+      "label": "Find Flashcards by ID",
+      "module": "Flashcards",
+      "function": "getFlashcardsById",
+      "purpose": "Fetch single Flashcards record by unique ID",
+      "file": "router.py",
+      "tables": [
+        "due"
+      ],
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/api/v1/topics/{topic_id}/flashcards/due"
+        }
+      ],
+      "sql": "SELECT * FROM \"flashcardss\" WHERE id = $1 LIMIT 1;"
+    },
+    {
+      "label": "Find Flashcards by ID",
+      "module": "Flashcards",
+      "function": "getFlashcardsById",
+      "purpose": "Fetch single Flashcards record by unique ID",
+      "file": "router.py",
+      "tables": [
+        "stats"
+      ],
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/api/v1/topics/{topic_id}/flashcards/stats"
+        }
+      ],
+      "sql": "SELECT * FROM \"flashcardss\" WHERE id = $1 LIMIT 1;"
+    },
+    {
+      "label": "Get Flashcards Due",
+      "module": "Flashcards",
+      "function": "getFlashcardsDue",
+      "purpose": "Fetch due for Flashcards module",
+      "file": "router.py",
+      "tables": [
+        "due"
+      ],
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/api/v1/flashcards/due"
+        }
+      ],
+      "sql": "SELECT * FROM \"due\" ORDER BY created_at DESC;"
+    },
+    {
+      "label": "Get Flashcards Stats_Summary",
+      "module": "Flashcards",
+      "function": "getFlashcardsStats_Summary",
+      "purpose": "Fetch stats_summary for Flashcards module",
+      "file": "router.py",
+      "tables": [
+        "stats_summary"
+      ],
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/api/v1/flashcards/stats-summary"
+        }
+      ],
+      "sql": "SELECT * FROM \"stats_summary\" ORDER BY created_at DESC;"
+    },
+    {
+      "label": "Update Flashcards Record",
+      "module": "Flashcards",
+      "function": "updateFlashcards",
+      "purpose": "Update existing Flashcards record by ID",
+      "file": "router.py",
+      "tables": [
+        "flashcardss"
+      ],
+      "endpoints": [
+        {
+          "method": "PATCH",
+          "path": "/api/v1/flashcards/{flashcard_id}"
+        }
+      ],
+      "sql": "UPDATE \"flashcardss\" SET updated_at = NOW() WHERE id = $1 RETURNING *;"
+    },
+    {
+      "label": "Update Flashcards Archive",
+      "module": "Flashcards",
+      "function": "updateFlashcardsArchive",
+      "purpose": "Update archive attribute on Flashcards",
+      "file": "router.py",
+      "tables": [
+        "archive"
+      ],
+      "endpoints": [
+        {
+          "method": "PATCH",
+          "path": "/api/v1/flashcards/{flashcard_id}/archive"
+        }
+      ],
+      "sql": "UPDATE \"flashcardss\" SET archive = $1, updated_at = NOW() WHERE id = $2 RETURNING *;"
+    },
+    {
+      "label": "Create Flashcards Review",
+      "module": "Flashcards",
+      "function": "createFlashcardsReview",
+      "purpose": "Insert new review record linked to Flashcards",
+      "file": "router.py",
+      "tables": [
+        "review"
+      ],
+      "endpoints": [
+        {
+          "method": "POST",
+          "path": "/api/v1/flashcards/{flashcard_id}/review"
+        }
+      ],
+      "sql": "INSERT INTO \"review\" (flashcards_id, created_at) VALUES ($1, NOW()) RETURNING *;"
+    },
+    {
+      "label": "Create Flashcards Regenerate",
+      "module": "Flashcards",
+      "function": "createFlashcardsRegenerate",
+      "purpose": "Insert new regenerate record linked to Flashcards",
+      "file": "router.py",
+      "tables": [
+        "regenerate"
+      ],
+      "endpoints": [
+        {
+          "method": "POST",
+          "path": "/api/v1/flashcards/{flashcard_id}/regenerate"
+        }
+      ],
+      "sql": "INSERT INTO \"regenerate\" (flashcards_id, created_at) VALUES ($1, NOW()) RETURNING *;"
+    },
+    {
+      "label": "Delete Flashcards Record",
+      "module": "Flashcards",
+      "function": "deleteFlashcards",
+      "purpose": "Delete record from flashcardss by ID",
+      "file": "router.py",
+      "tables": [
+        "flashcardss"
+      ],
+      "endpoints": [
+        {
+          "method": "DELETE",
+          "path": "/api/v1/flashcards/{flashcard_id}"
+        }
+      ],
+      "sql": "DELETE FROM \"flashcardss\" WHERE id = $1;"
+    },
+    {
+      "label": "Find Mastery by ID",
+      "module": "Mastery",
+      "function": "getMasteryById",
+      "purpose": "Fetch single Mastery record by unique ID",
+      "file": "router.py",
+      "tables": [
+        "weak"
+      ],
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/api/v1/topics/{topic_id}/mastery/weak"
+        }
+      ],
+      "sql": "SELECT * FROM \"masterys\" WHERE id = $1 LIMIT 1;"
+    },
+    {
+      "label": "Find Mastery by ID",
+      "module": "Mastery",
+      "function": "getMasteryById",
+      "purpose": "Fetch single Mastery record by unique ID",
+      "file": "router.py",
+      "tables": [
+        "history"
+      ],
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/api/v1/topics/{topic_id}/mastery/{concept_id}/history"
+        }
+      ],
+      "sql": "SELECT * FROM \"masterys\" WHERE id = $1 LIMIT 1;"
+    },
+    {
+      "label": "Find Notes by ID",
+      "module": "Notes",
+      "function": "getNotesById",
+      "purpose": "Fetch single Notes record by unique ID",
+      "file": "router.py",
+      "tables": [
+        "paginated"
+      ],
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/api/v1/topics/{topic_id}/notes/paginated"
+        }
+      ],
+      "sql": "SELECT * FROM \"notess\" WHERE id = $1 LIMIT 1;"
+    },
+    {
+      "label": "Find Notes by ID",
+      "module": "Notes",
+      "function": "getNotesById",
+      "purpose": "Fetch single Notes record by unique ID",
+      "file": "router.py",
+      "tables": [
+        "search"
+      ],
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/api/v1/topics/{topic_id}/notes/search"
+        }
+      ],
+      "sql": "SELECT * FROM \"notess\" WHERE id = $1 LIMIT 1;"
+    },
+    {
+      "label": "Find Notes by ID",
+      "module": "Notes",
+      "function": "getNotesById",
+      "purpose": "Fetch single Notes record by unique ID",
+      "file": "router.py",
+      "tables": [
+        "notess"
+      ],
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/api/v1/topics/{topic_id}/notes"
+        }
+      ],
+      "sql": "SELECT * FROM \"notess\" WHERE id = $1 LIMIT 1;"
+    },
+    {
+      "label": "Create New Notes",
+      "module": "Notes",
+      "function": "createNotes",
+      "purpose": "Insert new record into Notes table",
+      "file": "router.py",
+      "tables": [
+        "notess"
+      ],
+      "endpoints": [
+        {
+          "method": "POST",
+          "path": "/api/v1/topics/{topic_id}/notes"
+        }
+      ],
+      "sql": "INSERT INTO \"notess\" (id, created_at) VALUES ($1, NOW()) RETURNING *;"
+    },
+    {
+      "label": "Update Notes Move",
+      "module": "Notes",
+      "function": "updateNotesMove",
+      "purpose": "Update move attribute on Notes",
+      "file": "router.py",
+      "tables": [
+        "move"
+      ],
+      "endpoints": [
+        {
+          "method": "PATCH",
+          "path": "/api/v1/notes/{note_id}/move"
+        }
+      ],
+      "sql": "UPDATE \"notess\" SET move = $1, updated_at = NOW() WHERE id = $2 RETURNING *;"
+    },
+    {
+      "label": "Find Notes by ID",
+      "module": "Notes",
+      "function": "getNotesById",
+      "purpose": "Fetch single Notes record by unique ID",
+      "file": "router.py",
+      "tables": [
+        "notess"
+      ],
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/api/v1/notes/{note_id}"
+        }
+      ],
+      "sql": "SELECT * FROM \"notess\" WHERE id = $1 LIMIT 1;"
+    },
+    {
+      "label": "Update Notes Record",
+      "module": "Notes",
+      "function": "updateNotes",
+      "purpose": "Update existing Notes record by ID",
+      "file": "router.py",
+      "tables": [
+        "notess"
+      ],
+      "endpoints": [
+        {
+          "method": "PATCH",
+          "path": "/api/v1/notes/{note_id}"
+        }
+      ],
+      "sql": "UPDATE \"notess\" SET updated_at = NOW() WHERE id = $1 RETURNING *;"
+    },
+    {
+      "label": "Delete Notes Record",
+      "module": "Notes",
+      "function": "deleteNotes",
+      "purpose": "Delete record from notess by ID",
+      "file": "router.py",
+      "tables": [
+        "notess"
+      ],
+      "endpoints": [
+        {
+          "method": "DELETE",
+          "path": "/api/v1/notes/{note_id}"
+        }
+      ],
+      "sql": "DELETE FROM \"notess\" WHERE id = $1;"
+    },
+    {
+      "label": "Find Quizzes by ID",
+      "module": "Quizzes",
+      "function": "getQuizzesById",
+      "purpose": "Fetch single Quizzes record by unique ID",
+      "file": "router.py",
+      "tables": [
+        "quizzess"
+      ],
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/api/v1/topics/{topic_id}/quizzes"
+        }
+      ],
+      "sql": "SELECT * FROM \"quizzess\" WHERE id = $1 LIMIT 1;"
+    },
+    {
+      "label": "Create Quizzes Generate",
+      "module": "Quizzes",
+      "function": "createQuizzesGenerate",
+      "purpose": "Insert new generate record linked to Quizzes",
+      "file": "router.py",
+      "tables": [
+        "generate"
+      ],
+      "endpoints": [
+        {
+          "method": "POST",
+          "path": "/api/v1/topics/{topic_id}/quizzes/generate"
+        }
+      ],
+      "sql": "INSERT INTO \"generate\" (quizzes_id, created_at) VALUES ($1, NOW()) RETURNING *;"
+    },
+    {
+      "label": "Find Quizzes by ID",
+      "module": "Quizzes",
+      "function": "getQuizzesById",
+      "purpose": "Fetch single Quizzes record by unique ID",
+      "file": "router.py",
+      "tables": [
+        "quizzess"
+      ],
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/api/v1/quizzes/{quiz_id}"
+        }
+      ],
+      "sql": "SELECT * FROM \"quizzess\" WHERE id = $1 LIMIT 1;"
+    },
+    {
+      "label": "Delete Quizzes Record",
+      "module": "Quizzes",
+      "function": "deleteQuizzes",
+      "purpose": "Delete record from quizzess by ID",
+      "file": "router.py",
+      "tables": [
+        "quizzess"
+      ],
+      "endpoints": [
+        {
+          "method": "DELETE",
+          "path": "/api/v1/quizzes/{quiz_id}"
+        }
+      ],
+      "sql": "DELETE FROM \"quizzess\" WHERE id = $1;"
+    },
+    {
+      "label": "Find Quizzes by ID",
+      "module": "Quizzes",
+      "function": "getQuizzesById",
+      "purpose": "Fetch single Quizzes record by unique ID",
+      "file": "router.py",
+      "tables": [
+        "attempts"
+      ],
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/api/v1/quizzes/{quiz_id}/attempts"
+        }
+      ],
+      "sql": "SELECT * FROM \"quizzess\" WHERE id = $1 LIMIT 1;"
+    },
+    {
+      "label": "Create Quizzes Attempts",
+      "module": "Quizzes",
+      "function": "createQuizzesAttempts",
+      "purpose": "Insert new attempts record linked to Quizzes",
+      "file": "router.py",
+      "tables": [
+        "attempts"
+      ],
+      "endpoints": [
+        {
+          "method": "POST",
+          "path": "/api/v1/quizzes/{quiz_id}/attempts"
+        }
+      ],
+      "sql": "INSERT INTO \"attempts\" (quizzes_id, created_at) VALUES ($1, NOW()) RETURNING *;"
+    },
+    {
+      "label": "Create Quizzes Answers",
+      "module": "Quizzes",
+      "function": "createQuizzesAnswers",
+      "purpose": "Insert new answers record linked to Quizzes",
+      "file": "router.py",
+      "tables": [
+        "answers"
+      ],
+      "endpoints": [
+        {
+          "method": "POST",
+          "path": "/api/v1/quizzes/attempts/{attempt_id}/answers"
+        }
+      ],
+      "sql": "INSERT INTO \"answers\" (quizzes_id, created_at) VALUES ($1, NOW()) RETURNING *;"
+    },
+    {
+      "label": "Create Quizzes Complete",
+      "module": "Quizzes",
+      "function": "createQuizzesComplete",
+      "purpose": "Insert new complete record linked to Quizzes",
+      "file": "router.py",
+      "tables": [
+        "complete"
+      ],
+      "endpoints": [
+        {
+          "method": "POST",
+          "path": "/api/v1/quizzes/attempts/{attempt_id}/complete"
+        }
+      ],
+      "sql": "INSERT INTO \"complete\" (quizzes_id, created_at) VALUES ($1, NOW()) RETURNING *;"
+    },
+    {
+      "label": "Find Quizzes by ID",
+      "module": "Quizzes",
+      "function": "getQuizzesById",
+      "purpose": "Fetch single Quizzes record by unique ID",
+      "file": "router.py",
+      "tables": [
+        "attempts"
+      ],
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/api/v1/quizzes/attempts/{attempt_id}"
+        }
+      ],
+      "sql": "SELECT * FROM \"quizzess\" WHERE id = $1 LIMIT 1;"
+    },
+    {
+      "label": "List All Study History Records",
+      "module": "Study History",
+      "function": "listStudy Historys",
+      "purpose": "Fetch all records for Study History module",
+      "file": "router.py",
+      "tables": [
+        "study_historys"
+      ],
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/study-history"
+        }
+      ],
+      "sql": "SELECT * FROM \"study_historys\" ORDER BY created_at DESC;"
+    },
+    {
+      "label": "Get Study History Stats",
+      "module": "Study History",
+      "function": "getStudy HistoryStats",
+      "purpose": "Fetch stats for Study History module",
+      "file": "router.py",
+      "tables": [
+        "stats"
+      ],
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/study-history/stats"
+        }
+      ],
+      "sql": "SELECT * FROM \"stats\" ORDER BY created_at DESC;"
+    },
+    {
+      "label": "List All Topics Records",
+      "module": "Topics",
+      "function": "listTopicss",
+      "purpose": "Fetch all records for Topics module",
+      "file": "router.py",
+      "tables": [
+        "topicss"
+      ],
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/topics"
+        }
+      ],
+      "sql": "SELECT * FROM \"topicss\" ORDER BY created_at DESC;"
+    },
+    {
+      "label": "Create New Topics",
+      "module": "Topics",
+      "function": "createTopics",
+      "purpose": "Insert new record into Topics table",
+      "file": "router.py",
+      "tables": [
+        "topicss"
+      ],
+      "endpoints": [
+        {
+          "method": "POST",
+          "path": "/topics"
+        }
+      ],
+      "sql": "INSERT INTO \"topicss\" (id, created_at) VALUES ($1, NOW()) RETURNING *;"
+    },
+    {
+      "label": "Find Topics by ID",
+      "module": "Topics",
+      "function": "getTopicsById",
+      "purpose": "Fetch single Topics record by unique ID",
+      "file": "router.py",
+      "tables": [
+        "topicss"
+      ],
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/topics/{topic_id}"
+        }
+      ],
+      "sql": "SELECT * FROM \"topicss\" WHERE id = $1 LIMIT 1;"
+    },
+    {
+      "label": "Update Topics Record",
+      "module": "Topics",
+      "function": "updateTopics",
+      "purpose": "Update existing Topics record by ID",
+      "file": "router.py",
+      "tables": [
+        "topicss"
+      ],
+      "endpoints": [
+        {
+          "method": "PATCH",
+          "path": "/topics/{topic_id}"
+        }
+      ],
+      "sql": "UPDATE \"topicss\" SET updated_at = NOW() WHERE id = $1 RETURNING *;"
+    },
+    {
+      "label": "Delete Topics Record",
+      "module": "Topics",
+      "function": "deleteTopics",
+      "purpose": "Delete record from topicss by ID",
+      "file": "router.py",
+      "tables": [
+        "topicss"
+      ],
+      "endpoints": [
+        {
+          "method": "DELETE",
+          "path": "/topics/{topic_id}"
+        }
+      ],
+      "sql": "DELETE FROM \"topicss\" WHERE id = $1;"
+    }
+  ]
+}

@@ -1,38 +1,108 @@
-# AI Study Assistant Backend
+# AI Study Assistant API (FastAPI)
 
-Express backend scaffold for the AI Study Assistant project.
+The backend is a Python/FastAPI service, organized into feature modules
+(`app/modules/{users,auth,topics,notes,ai,study_history}`) each with their own
+model/schema/repository/service/router, plus shared `core/` (config, security,
+logging, exceptions), `db/` (SQLAlchemy async engine/session), and `shared/`
+utilities. It preserves the existing `/api/v1` contract used by the Next.js
+frontend and adds topic-scoped RAG to the AI tutor.
 
-## Setup
+Sessions are server-side (a `user_sessions` Postgres table, not a
+client-readable cookie); auth, AI, and general API traffic are rate-limited;
+and structured JSON logs redact secrets. See `PRODUCTION.md` for the
+production checklist.
 
-```bash
-npm install
-npm run dev
+## Run locally
+
+```powershell
+cd backend
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+Copy-Item .env.example .env
+python -m uvicorn app.main:app --reload --port 5000
 ```
 
-Copy `.env.example` to `.env` and adjust values for your local database/session secret.
+Database schema changes are managed with Alembic. Apply all migrations with:
 
-Create the PostgreSQL database, then apply the schema and start the API:
-
-```sql
-CREATE DATABASE ai_study_assistant;
+```powershell
+alembic upgrade head
 ```
 
-```bash
-npm run db:migrate
-npm run dev
+To generate a new migration after changing a model in `app/modules/*/model.py`:
+
+```powershell
+alembic revision --autogenerate -m "describe the change"
 ```
 
-The connection string in `.env` uses this format:
+Useful URLs:
 
-```env
-DATABASE_URL=postgres://USERNAME:PASSWORD@HOST:5432/DATABASE_NAME
+- API: `http://localhost:5000/api/v1`
+- OpenAPI: `http://localhost:5000/docs`
+- Health: `http://localhost:5000/health`
+
+## RAG behavior
+
+Retrieval is **hybrid**: vector similarity search (pgvector) plus BM25-style
+lexical search, fused with Reciprocal Rank Fusion (RRF). Requires the
+[pgvector](https://github.com/pgvector/pgvector) Postgres extension --
+on Windows this means building it from source (MSVC + `nmake`); see the
+project notes for the exact steps used to set it up locally. The migration
+runs `CREATE EXTENSION IF NOT EXISTS vector` automatically once the
+extension binary is installed on the server.
+
+**Indexing (write time)** -- both notes and uploaded documents feed the same
+pipeline, in `app/modules/ai/indexing.py`, scheduled via FastAPI
+`BackgroundTasks` so it never blocks the note-save/upload response:
+
+1. extract text (`text_extraction.py`: plain text passthrough, PDF via `pypdf`);
+2. chunk it (`chunking.py`, paragraph-aware with overlap);
+3. embed each chunk (`embedding.py`, `EMBEDDING_PROVIDER=gemini|openai` --
+   independent from `AI_PROVIDER` since Groq has no embeddings API; both
+   providers are standardized on 768 dimensions so switching providers never
+   needs a schema migration);
+4. store chunks + embeddings in `document_chunks` (pgvector `Vector(768)`
+   column, HNSW index). If the embedding call fails, the chunk is still
+   stored with a `NULL` embedding -- it stays findable via BM25, it just
+   won't surface via vector search until re-indexed.
+
+Uploaded documents (`POST /api/v1/topics/{topicId}/documents`, multipart)
+return `202` immediately with `status: "pending"`; poll
+`GET /api/v1/documents/{documentId}` for `pending -> processing ->
+completed|failed`. The original file is kept on local disk
+(`UPLOAD_DIR`, behind a small `StorageBackend` interface in `storage.py` so
+an S3-compatible backend can be dropped in later) alongside the extracted
+text in the database.
+
+**Retrieval (chat time)**, in `app/modules/ai/retrieval.py`:
+
+1. verify the selected topic belongs to the signed-in student;
+2. embed the question and run a pgvector cosine-distance query, scoped to
+   the topic;
+3. independently score all of the topic's chunks with BM25
+   (`rag.py::score_bm25`);
+4. fuse both ranked lists via RRF and take the top `RAG_TOP_K`;
+5. if embedding generation or the vector query fails for any reason
+   (provider outage, nothing indexed yet), fall back to BM25 alone rather
+   than failing the chat request;
+6. send the fused evidence + recent chat history to the configured
+   `AI_PROVIDER` model, persist which chunks backed the answer
+   (`message_sources` table), and return `sources` citing either a note or
+   a document (`sourceType`, `sourceId`, `sourceTitle`, `excerpt`, `score`,
+   and `similarity` when a vector match was found).
+
+## Tests
+
+Tests need a real PostgreSQL instance (the schema uses Postgres-specific
+identity columns, JSONB, and functional indexes -- no SQLite). By default they
+run against `ai_study_assistant_test` on the same server as `DATABASE_URL`,
+created automatically; override with `TEST_DATABASE_URL` if needed.
+
+```powershell
+python -m pytest
 ```
 
-## Structure
-
-- `src/config` - environment and session configuration
-- `src/db` - database pool and migrations
-- `src/middleware` - request middleware and error handling
-- `src/modules` - feature modules
-- `src/utils` - shared helpers
-- `tests` - backend tests
+`tests/unit` covers pure logic (RAG retrieval, pagination math, config
+validation) with no DB. `tests/integration` drives the app through
+`TestClient` against the real test database, covering the full auth/session
+lifecycle, CRUD ownership rules, rate limiting, and security headers.

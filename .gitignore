@@ -4,3 +4,7 @@ tmp/
 node_modules/
 .DS_Store
 *.log
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
