@@ -7,6 +7,7 @@ import AppSidebar from "./AppSidebar";
 import {
   api,
   ApiError,
+  downloadFile,
   messageFromError,
   Note,
   Pagination,
@@ -609,13 +610,28 @@ export function TopicDetailPage() {
     }
   }
 
+  async function exportNotes(format: "csv" | "md") {
+    try {
+      await downloadFile(
+        `/topics/${topicId}/notes/export?format=${format}`,
+        `notes.${format}`,
+      );
+    } catch (requestError) {
+      setError(messageFromError(requestError));
+    }
+  }
+
   return (
     <PageShell title={topic?.title ?? "Topic"} subtitle={topic?.description ?? "Build understanding one clear note at a time."} action={<div className="page-actions"><Link href={`/knowledge-graph?topicId=${topicId}`} className="button button-secondary">◈ Knowledge graph</Link><Link href={`/mind-map?topicId=${topicId}`} className="button button-secondary">✺ Mind map</Link><Link href={`/ai-tutor?topicId=${topicId}`} className="button button-primary">✦ Ask AI tutor</Link><Link href="/topics" className="back-topics">← All topics</Link></div>}>
       {error && <p className="page-error" role="alert">{error}</p>}
       <section className="notes-panel">
         <div className="section-head">
           <div><h2>Your notes</h2><p>{pagination?.total ?? 0} notes in this topic</p></div>
-          <button className="add-note-button" onClick={() => setShowNote(true)}>＋ Add note</button>
+          <div className="page-actions">
+            <button className="button button-secondary" onClick={() => void exportNotes("md")}>⇩ Export Markdown</button>
+            <button className="button button-secondary" onClick={() => void exportNotes("csv")}>⇩ Export CSV</button>
+            <button className="add-note-button" onClick={() => setShowNote(true)}>＋ Add note</button>
+          </div>
         </div>
         <div className="search wide notes-search"><span>⌕</span><input value={query} onChange={(event) => { setQuery(event.target.value); setPage(1); }} placeholder="Search notes..." /></div>
         <div className="notes-list">
@@ -885,8 +901,20 @@ export function HistoryPage() {
     ai_chat: "✦",
   };
 
+  async function downloadProgressReport() {
+    try {
+      await downloadFile("/reports/progress?format=pdf", "progress-report.pdf");
+    } catch (requestError) {
+      setError(messageFromError(requestError));
+    }
+  }
+
   return (
-    <PageShell title="Study history" subtitle="A real record of your learning activity.">
+    <PageShell
+      title="Study history"
+      subtitle="A real record of your learning activity."
+      action={<button className="button button-primary" onClick={() => void downloadProgressReport()}>⇩ Download progress report</button>}
+    >
       {error && <p className="page-error" role="alert">{error}</p>}
       <div className="history-stats">
         <article><small>THIS WEEK</small><strong>{stats?.activities_this_week ?? 0}</strong><span>learning activities</span></article>

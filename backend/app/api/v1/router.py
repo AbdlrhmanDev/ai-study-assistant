@@ -6,6 +6,7 @@ from ...modules.analytics.router import router as analytics_router
 from ...modules.auth.router import router as auth_router
 from ...modules.coach.router import router as coach_router
 from ...modules.exams.router import router as exams_router
+from ...modules.export.router import router as export_router
 from ...modules.flashcards.router import router as flashcards_router
 from ...modules.gamification.router import router as gamification_router
 from ...modules.goal_prediction.router import router as goal_prediction_router
@@ -33,6 +34,7 @@ api_router.include_router(notes_router)
 api_router.include_router(ai_router)
 api_router.include_router(coach_router)
 api_router.include_router(exams_router)
+api_router.include_router(export_router)
 api_router.include_router(flashcards_router)
 api_router.include_router(gamification_router)
 api_router.include_router(goal_prediction_router)

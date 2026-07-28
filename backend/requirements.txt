@@ -12,6 +12,7 @@ slowapi==0.1.9
 structlog==24.4.0
 pgvector==0.3.6
 pypdf==5.6.1
+reportlab==4.4.3
 openai==1.99.9
 google-genai==1.30.0
 groq==0.31.0

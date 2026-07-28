@@ -67,3 +67,33 @@ export async function api<T>(
 export function messageFromError(error: unknown) {
   return error instanceof Error ? error.message : "Something went wrong";
 }
+
+function filenameFromContentDisposition(header: string | null): string | null {
+  const match = header?.match(/filename="?([^"]+)"?/);
+  return match ? match[1] : null;
+}
+
+// Downloads use a raw fetch instead of api<T>() because the response body is
+// a file blob, not JSON.
+export async function downloadFile(path: string, fallbackFilename: string): Promise<void> {
+  const response = await fetch(`${API_URL}${path}`, { credentials: "include" });
+  if (!response.ok) {
+    const payload = await response.json().catch(() => null);
+    throw new ApiError(payload?.message ?? "Something went wrong", response.status, payload?.details);
+  }
+
+  const filename =
+    filenameFromContentDisposition(response.headers.get("Content-Disposition")) ?? fallbackFilename;
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  try {
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}

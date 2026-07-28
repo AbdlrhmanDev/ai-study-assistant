@@ -12,7 +12,7 @@ import {
   humanizeFilename,
   useAuthFailure,
 } from "./BackendPages";
-import { api, Note, Pagination, Topic, messageFromError } from "../lib/api";
+import { api, downloadFile, Note, Pagination, Topic, messageFromError } from "../lib/api";
 
 export type FlashcardRating = "easy" | "medium" | "hard" | "forgot";
 export type FlashcardOrigin = "manual" | "ai";
@@ -387,11 +387,20 @@ export function FlashcardsDeckPage() {
     }
   }
 
+  async function exportFlashcards() {
+    try {
+      await downloadFile(`/topics/${topicId}/flashcards/export?format=csv`, "flashcards.csv");
+    } catch (requestError) {
+      setActionError(messageFromError(requestError));
+    }
+  }
+
   return (
     <PageShell
       title={topic?.title ?? "Flashcards"}
       subtitle="Manage this deck's cards, or start a review session."
       action={<div className="page-actions">
+        <button className="button button-secondary" onClick={() => void exportFlashcards()}>⇩ Export CSV</button>
         <Link className="button button-primary" href={`/flashcards/review?topicId=${topicId}`}>▶ Start review</Link>
         <Link className="back-topics" href="/flashcards">← All decks</Link>
       </div>}
