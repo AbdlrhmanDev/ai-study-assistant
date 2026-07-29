@@ -66,15 +66,15 @@ def do_run_migrations(connection: Connection) -> None:
         context.run_migrations()
 
 
+async def _connect_and_migrate(connectable) -> None:
+    async with connectable.connect() as connection:
+        await connection.run_sync(do_run_migrations)
+
+
 async def run_migrations_online() -> None:
     settings = get_settings()
-    # Mirror app/db/session.py's connect_args (ssl flag) and add an explicit
-    # connect timeout: without one, a stalled TCP/TLS handshake to the
-    # database (e.g. a container networking hiccup) blocks silently until
-    # the deploy platform's healthcheck window expires, with zero log
-    # output to explain why -- a fast, loud failure here is far more
-    # debuggable than a multi-minute silent hang.
-    connect_args: dict = {"timeout": 10}
+    # Mirror app/db/session.py's connect_args (ssl flag).
+    connect_args: dict = {}
     if settings.database_ssl:
         connect_args["ssl"] = True
 
@@ -84,19 +84,25 @@ async def run_migrations_online() -> None:
         connect_args=connect_args,
     )
 
-    # A container's outbound networking (DNS, egress routing) can take a
-    # moment to become ready right at boot; retry the first connection a
-    # few times with backoff before giving up, so a transient cold-start
-    # hiccup doesn't fail the whole deploy.
+    # A container's outbound networking (DNS resolution in particular) can
+    # hang -- not just fail -- for the first several seconds right at boot,
+    # and that hang isn't bounded by asyncpg's own `timeout` connect arg
+    # (observed in production: a fresh container blocked completely silent
+    # for the full 5-minute deploy healthcheck window with zero log output,
+    # even with a `connect_args={"timeout": ...}` in place). Wrapping the
+    # whole attempt in `asyncio.wait_for` bounds it regardless of which
+    # layer -- DNS, TCP connect, TLS handshake -- is actually stuck, and
+    # retrying with backoff lets a later attempt succeed once the
+    # container's networking has finished settling.
     last_error: Exception | None = None
-    for attempt in range(5):
+    for attempt in range(6):
         try:
-            async with connectable.connect() as connection:
-                await connection.run_sync(do_run_migrations)
+            await asyncio.wait_for(_connect_and_migrate(connectable), timeout=15)
             last_error = None
             break
-        except OSError as error:
+        except (OSError, TimeoutError) as error:
             last_error = error
+            print(f"[migrations] connection attempt {attempt + 1} failed: {error!r}", flush=True)
             await asyncio.sleep(2**attempt)
     if last_error is not None:
         raise last_error
