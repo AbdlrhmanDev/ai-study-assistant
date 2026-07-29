@@ -138,13 +138,20 @@ class SessionMiddleware(BaseHTTPMiddleware):
                     expires_at=expires_at,
                 )
                 await db.commit()
+                # Frontend and backend are deployed as separate services on
+                # different subdomains (e.g. Railway's *.up.railway.app),
+                # which browsers treat as cross-site -- SameSite=Lax cookies
+                # are never attached to those requests. SameSite=None is only
+                # valid with Secure, so this stays Lax/non-secure locally
+                # where both run on http://localhost (same-site already).
+                is_production = get_settings().is_production
                 response.set_cookie(
                     cookie_name,
                     current_token,
                     max_age=SESSION_MAX_AGE_SECONDS,
                     httponly=True,
-                    samesite="lax",
-                    secure=get_settings().is_production,
+                    samesite="none" if is_production else "lax",
+                    secure=is_production,
                     path="/",
                 )
             else:
