@@ -603,4 +603,23 @@ a:focus-visible,button:focus-visible,input:focus-visible,textarea:focus-visible,
 [data-theme="dark"] .workspace-code-block{background:#13111a}
 [data-theme="dark"] .workspace-callout.bg-default{background:#241f2c}
 [data-theme="dark"] .modal-backdrop{background:#00000099}
+[data-theme="dark"] .auth-card input{
+  background:var(--surface);
+  border-color:var(--line);
+  color:var(--ink);
+  caret-color:var(--ink);
+}
+[data-theme="dark"] .auth-card input::placeholder{color:var(--text-soft);opacity:.78}
+[data-theme="dark"] .auth-card .input-icon-wrap>svg{color:var(--text-soft)}
+[data-theme="dark"] .auth-card input:-webkit-autofill,
+[data-theme="dark"] .auth-card input:-webkit-autofill:hover{
+  -webkit-text-fill-color:var(--ink);
+  -webkit-box-shadow:0 0 0 1000px var(--surface) inset;
+  caret-color:var(--ink);
+}
+[data-theme="dark"] .auth-card input:-webkit-autofill:focus{
+  -webkit-text-fill-color:var(--ink);
+  -webkit-box-shadow:0 0 0 1000px var(--surface) inset,0 0 0 3px #7558e82e;
+  border-color:var(--violet);
+}
 [data-theme="dark"] ::selection{background:var(--lavender);color:var(--ink)}
