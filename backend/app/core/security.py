@@ -73,6 +73,9 @@ def destroy_session(request: Request) -> None:
     request.scope["session"] = {}
 
 
+_CSRF_UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
+
+
 class SessionMiddleware(BaseHTTPMiddleware):
     """Server-side session store: an opaque random token in an httpOnly
     cookie, session data kept in Postgres. Writes ``request.scope["session"]``
@@ -85,6 +88,31 @@ class SessionMiddleware(BaseHTTPMiddleware):
     ) -> Response:
         cookie_name = _cookie_name()
         incoming_token = request.cookies.get(cookie_name)
+
+        # CSRF defense: the session cookie is SameSite=None in production
+        # (required for the cross-subdomain frontend/backend split -- see
+        # the samesite= comment below), which means browsers *do* attach it
+        # to cross-site requests. CORS alone doesn't stop this for
+        # multipart/form-data or other "simple" request bodies (e.g. the
+        # document-upload endpoints), since those skip preflight entirely
+        # and the request reaches the server before any CORS check runs.
+        # Requiring Origin to be present and allow-listed for any
+        # state-changing request that's carrying an existing session cookie
+        # closes that gap; our own frontend always sends Origin (it's
+        # cross-origin from the backend by construction) so this never
+        # affects legitimate traffic.
+        if (
+            incoming_token
+            and request.method in _CSRF_UNSAFE_METHODS
+            and get_settings().is_production
+        ):
+            origin = request.headers.get("origin")
+            if origin not in get_settings().origins:
+                request_id = getattr(request.state, "request_id", None)
+                return JSONResponse(
+                    error_body("Cross-site request rejected", request_id=request_id),
+                    status_code=403,
+                )
 
         data: dict = {}
         if incoming_token:

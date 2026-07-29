@@ -3,7 +3,7 @@ from logging.config import fileConfig
 
 from sqlalchemy import pool
 from sqlalchemy.engine import Connection
-from sqlalchemy.ext.asyncio import async_engine_from_config
+from sqlalchemy.ext.asyncio import create_async_engine
 
 from alembic import context
 
@@ -67,14 +67,39 @@ def do_run_migrations(connection: Connection) -> None:
 
 
 async def run_migrations_online() -> None:
-    connectable = async_engine_from_config(
-        config.get_section(config.config_ini_section, {}),
-        prefix="sqlalchemy.",
+    settings = get_settings()
+    # Mirror app/db/session.py's connect_args (ssl flag) and add an explicit
+    # connect timeout: without one, a stalled TCP/TLS handshake to the
+    # database (e.g. a container networking hiccup) blocks silently until
+    # the deploy platform's healthcheck window expires, with zero log
+    # output to explain why -- a fast, loud failure here is far more
+    # debuggable than a multi-minute silent hang.
+    connect_args: dict = {"timeout": 10}
+    if settings.database_ssl:
+        connect_args["ssl"] = True
+
+    connectable = create_async_engine(
+        settings.sqlalchemy_database_url,
         poolclass=pool.NullPool,
+        connect_args=connect_args,
     )
 
-    async with connectable.connect() as connection:
-        await connection.run_sync(do_run_migrations)
+    # A container's outbound networking (DNS, egress routing) can take a
+    # moment to become ready right at boot; retry the first connection a
+    # few times with backoff before giving up, so a transient cold-start
+    # hiccup doesn't fail the whole deploy.
+    last_error: Exception | None = None
+    for attempt in range(5):
+        try:
+            async with connectable.connect() as connection:
+                await connection.run_sync(do_run_migrations)
+            last_error = None
+            break
+        except OSError as error:
+            last_error = error
+            await asyncio.sleep(2**attempt)
+    if last_error is not None:
+        raise last_error
 
     await connectable.dispose()
 
