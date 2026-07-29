@@ -66,14 +66,16 @@ def do_run_migrations(connection: Connection) -> None:
         context.run_migrations()
 
 
-async def _connect_and_migrate(connectable) -> None:
-    async with connectable.connect() as connection:
-        await connection.run_sync(do_run_migrations)
-
-
 async def run_migrations_online() -> None:
     settings = get_settings()
-    # Mirror app/db/session.py's connect_args (ssl flag).
+    # Mirror app/db/session.py's connect_args (ssl flag). A cold-boot
+    # network/DNS stall that outlasts the deploy platform's healthcheck
+    # window is handled at the process level instead (see
+    # docker-entrypoint.sh's `timeout` wrapper) -- a blocking syscall
+    # already running in a thread-pool worker can't actually be interrupted
+    # by asyncio-level cancellation (confirmed in production: wrapping this
+    # in asyncio.wait_for never fired even once across a full 5-minute
+    # hang), so only an OS-level process kill can unstick it.
     connect_args: dict = {}
     if settings.database_ssl:
         connect_args["ssl"] = True
@@ -84,28 +86,8 @@ async def run_migrations_online() -> None:
         connect_args=connect_args,
     )
 
-    # A container's outbound networking (DNS resolution in particular) can
-    # hang -- not just fail -- for the first several seconds right at boot,
-    # and that hang isn't bounded by asyncpg's own `timeout` connect arg
-    # (observed in production: a fresh container blocked completely silent
-    # for the full 5-minute deploy healthcheck window with zero log output,
-    # even with a `connect_args={"timeout": ...}` in place). Wrapping the
-    # whole attempt in `asyncio.wait_for` bounds it regardless of which
-    # layer -- DNS, TCP connect, TLS handshake -- is actually stuck, and
-    # retrying with backoff lets a later attempt succeed once the
-    # container's networking has finished settling.
-    last_error: Exception | None = None
-    for attempt in range(6):
-        try:
-            await asyncio.wait_for(_connect_and_migrate(connectable), timeout=15)
-            last_error = None
-            break
-        except (OSError, TimeoutError) as error:
-            last_error = error
-            print(f"[migrations] connection attempt {attempt + 1} failed: {error!r}", flush=True)
-            await asyncio.sleep(2**attempt)
-    if last_error is not None:
-        raise last_error
+    async with connectable.connect() as connection:
+        await connection.run_sync(do_run_migrations)
 
     await connectable.dispose()
 
