@@ -3,6 +3,21 @@
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { FormEvent, useCallback, useEffect, useState } from "react";
+import {
+  ArrowLeft,
+  ArrowRight,
+  BarChart3,
+  Check,
+  ClipboardCheck,
+  Clock,
+  FileText,
+  Play,
+  Sparkles,
+  StickyNote,
+  Trash2,
+  X,
+  XCircle,
+} from "lucide-react";
 import { PageShell, useAuthFailure } from "./BackendPages";
 import { api, Topic, messageFromError } from "../lib/api";
 
@@ -152,7 +167,7 @@ export function ExamsPage() {
         <div className="deck-grid">
           {topics.map((topic) => (
             <article className="deck-card" key={topic.id}>
-              <span className="topic-icon coral">◈</span>
+              <span className="topic-icon coral"><ClipboardCheck size={18} strokeWidth={1.8} /></span>
               <h2>{topic.title}</h2>
               <p>{examCounts[topic.id] ?? 0} exam{examCounts[topic.id] === 1 ? "" : "s"}</p>
               <div className="deck-card-actions">
@@ -274,8 +289,8 @@ export function ExamTopicPage() {
       title={topic?.title ?? "Exams"}
       subtitle="Generate a formal, timed exam, or pick up an existing one."
       action={<div className="page-actions">
-        <button className="button button-primary" onClick={() => setShowGenerate(true)}>✦ Generate exam</button>
-        <Link className="back-topics" href="/exams">← All topics</Link>
+        <button className="button button-primary" onClick={() => setShowGenerate(true)}><Sparkles size={15} /> Generate exam</button>
+        <Link className="back-topics" href="/exams"><ArrowLeft size={13} /> All topics</Link>
       </div>}
     >
       {error && <p className="page-error" role="alert">{error}</p>}
@@ -284,23 +299,23 @@ export function ExamTopicPage() {
           {exams.map((exam) => (
             <article key={exam.id}>
               <div>
-                <span>◈</span>
+                <span><ClipboardCheck size={18} strokeWidth={1.8} /></span>
                 <div>
                   <h3>{exam.title}</h3>
                   <div className="flashcard-meta">
                     <small>{exam.questionCount} question{exam.questionCount === 1 ? "" : "s"}</small>
-                    <small>⏱ {Math.round(exam.timeLimitSeconds / 60)} min</small>
+                    <small><Clock size={11} /> {Math.round(exam.timeLimitSeconds / 60)} min</small>
                     {exam.latestAttempt && <small>Last score: {exam.latestAttempt.score}%</small>}
                   </div>
                 </div>
               </div>
               <div className="note-actions">
                 <Link className="note-action edit-action" href={`/exams/take?examId=${exam.id}`}>
-                  <span>▶</span>{exam.latestAttempt ? "Retake" : "Take exam"}
+                  <span><Play size={13} fill="currentColor" /></span>{exam.latestAttempt ? "Retake" : "Take exam"}
                 </Link>
                 {exam.latestAttempt && (
                   <Link className="note-action" href={`/exams/results?attemptId=${exam.latestAttempt.id}&topicId=${topicId}`}>
-                    <span>📊</span>Last results
+                    <span><BarChart3 size={13} /></span>Last results
                   </Link>
                 )}
                 <button className="danger-link" onClick={() => setDeletingExam(exam)}>Delete</button>
@@ -314,8 +329,8 @@ export function ExamTopicPage() {
       {showGenerate && (
         <div className="modal-backdrop" onMouseDown={() => setShowGenerate(false)}>
           <form role="dialog" aria-modal="true" className="topic-modal action-modal quiz-generate-modal" onSubmit={generateExam} onMouseDown={(event) => event.stopPropagation()}>
-            <button type="button" className="modal-close" onClick={() => setShowGenerate(false)}>×</button>
-            <div className="modal-icon edit-icon">◈</div>
+            <button type="button" className="modal-close" onClick={() => setShowGenerate(false)}><X size={20} /></button>
+            <div className="modal-icon edit-icon"><ClipboardCheck size={18} strokeWidth={1.8} /></div>
             <div className="eyebrow">GENERATE AN EXAM</div>
             <h2>Generate exam</h2>
             {genError && <p className="form-error">{genError}</p>}
@@ -358,8 +373,8 @@ export function ExamTopicPage() {
       {deletingExam && (
         <div className="modal-backdrop" onMouseDown={() => (deleting ? null : setDeletingExam(null))}>
           <div role="alertdialog" aria-modal="true" className="topic-modal action-modal delete-modal" onMouseDown={(event) => event.stopPropagation()}>
-            <button type="button" className="modal-close" disabled={deleting} onClick={() => setDeletingExam(null)}>×</button>
-            <div className="modal-icon delete-icon">🗑</div>
+            <button type="button" className="modal-close" disabled={deleting} onClick={() => setDeletingExam(null)}><X size={20} /></button>
+            <div className="modal-icon delete-icon"><Trash2 size={22} /></div>
             <div className="eyebrow">REMOVE THIS EXAM</div>
             <h2>Delete “{deletingExam.title}”?</h2>
             <p>This removes the exam, its questions, and every past attempt. This can&apos;t be undone.</p>
@@ -560,22 +575,22 @@ export function ExamTakePage() {
 
   if (!attemptId) {
     return (
-      <PageShell title={exam.title} subtitle="A formally timed sitting -- the clock starts the moment you begin." action={<Link className="back-topics" href={`/exams/topic?topicId=${exam.topicId}`}>← Back to exams</Link>}>
+      <PageShell title={exam.title} subtitle="A formally timed sitting -- the clock starts the moment you begin." action={<Link className="back-topics" href={`/exams/topic?topicId=${exam.topicId}`}><ArrowLeft size={13} /> Back to exams</Link>}>
         {error && <p className="page-error" role="alert">{error}</p>}
         <section className="notes-panel quiz-intro-panel">
           <div className="flashcard-summary-row">
             <article className="flashcard-summary-stat">
-              <span className="stat-icon violet">▤</span>
+              <span className="stat-icon violet"><StickyNote size={18} strokeWidth={1.8} /></span>
               <div><small>QUESTIONS</small><strong>{questions.length}</strong></div>
             </article>
             <article className="flashcard-summary-stat">
-              <span className="stat-icon coral">◷</span>
+              <span className="stat-icon coral"><Clock size={18} strokeWidth={1.8} /></span>
               <div><small>TIME LIMIT</small><strong>{Math.round(exam.timeLimitSeconds / 60)} min</strong></div>
             </article>
           </div>
           <p className="modal-hint">The timer is server-enforced -- it keeps running even if you close this tab, and the exam auto-submits when it reaches zero.</p>
           <button className="button button-primary" disabled={starting || !questions.length} onClick={() => void startExam()}>
-            {starting ? "Starting…" : "▶ Start exam"}
+            {starting ? "Starting…" : <><Play size={13} fill="currentColor" /> Start exam</>}
           </button>
         </section>
       </PageShell>
@@ -586,7 +601,7 @@ export function ExamTakePage() {
     <PageShell
       title={exam.title}
       subtitle="Answer honestly -- essays and case studies are graded on your reasoning, not exact wording."
-      action={remainingSeconds != null ? <span className="quiz-timer exam-timer">⏱ {formatSeconds(remainingSeconds)}</span> : undefined}
+      action={remainingSeconds != null ? <span className="quiz-timer exam-timer"><Clock size={14} /> {formatSeconds(remainingSeconds)}</span> : undefined}
     >
       {error && <p className="page-error" role="alert">{error}</p>}
       {currentQuestion && (
@@ -609,10 +624,10 @@ export function ExamTakePage() {
           </article>
           <div className="quiz-taking-actions">
             {currentIndex > 0 && (
-              <button type="button" className="button button-secondary" onClick={() => goToIndex(currentIndex - 1)}>← Previous</button>
+              <button type="button" className="button button-secondary" onClick={() => goToIndex(currentIndex - 1)}><ArrowLeft size={13} /> Previous</button>
             )}
             <button type="button" className="button button-primary" disabled={submitting || finishing} onClick={() => void submitAndAdvance()}>
-              {submitting || finishing ? "Saving…" : currentIndex + 1 < questions.length ? "Next question →" : "Finish exam"}
+              {submitting || finishing ? "Saving…" : currentIndex + 1 < questions.length ? <>Next question <ArrowRight size={13} /></> : "Finish exam"}
             </button>
           </div>
         </div>
@@ -651,7 +666,7 @@ export function ExamResultsPage() {
     <PageShell
       title="Exam results"
       subtitle={results ? `${results.score}% overall` : "Loading your results…"}
-      action={hasTopic ? <Link className="back-topics" href={`/exams/topic?topicId=${topicId}`}>← Back to exams</Link> : undefined}
+      action={hasTopic ? <Link className="back-topics" href={`/exams/topic?topicId=${topicId}`}><ArrowLeft size={13} /> Back to exams</Link> : undefined}
     >
       {error && <p className="page-error" role="alert">{error}</p>}
       {loading ? <div className="empty">Loading your results…</div> : results && (
@@ -662,7 +677,7 @@ export function ExamResultsPage() {
               <div><small>SCORE</small><strong>{results.score}%</strong></div>
             </article>
             <article className="flashcard-summary-stat">
-              <span className="stat-icon mint">▤</span>
+              <span className="stat-icon mint"><StickyNote size={18} strokeWidth={1.8} /></span>
               <div><small>QUESTIONS</small><strong>{results.answers.length}</strong></div>
             </article>
           </div>
@@ -688,7 +703,7 @@ export function ExamResultsPage() {
               {results.answers.map((answer, index) => (
                 <article key={answer.questionId} className={answer.isCorrect === false ? "quiz-answer-incorrect" : answer.isCorrect === true ? "quiz-answer-correct" : "exam-answer-rubric"}>
                   <div>
-                    <span>{answer.isCorrect === true ? "✓" : answer.isCorrect === false ? "✕" : "◈"}</span>
+                    <span>{answer.isCorrect === true ? <Check size={13} strokeWidth={2.5} /> : answer.isCorrect === false ? <XCircle size={13} /> : <ClipboardCheck size={13} />}</span>
                     <div>
                       <h3>{index + 1}. {answer.prompt}</h3>
                       <div className="flashcard-meta">
@@ -697,7 +712,7 @@ export function ExamResultsPage() {
                         {answer.pointsEarned != null && answer.pointsPossible != null && (
                           <small>{Math.round(answer.pointsEarned * 10) / 10}/{Math.round(answer.pointsPossible * 10) / 10} points</small>
                         )}
-                        {humanize(answer) && <span className="source-chip document">{answer.sourceType === "note" ? "▤" : "📄"} {humanize(answer)}</span>}
+                        {humanize(answer) && <span className="source-chip document">{answer.sourceType === "note" ? <StickyNote size={11} /> : <FileText size={11} />} {humanize(answer)}</span>}
                       </div>
                       {!answer.criteriaScores && <p>{answer.explanation}</p>}
                       {answer.criteriaScores && (

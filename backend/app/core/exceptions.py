@@ -1,5 +1,6 @@
 import structlog
 from fastapi import FastAPI, Request
+from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
@@ -30,8 +31,13 @@ async def app_error_handler(request: Request, error: AppError) -> JSONResponse:
 async def validation_error_handler(
     request: Request, error: RequestValidationError
 ) -> JSONResponse:
+    # error.errors() includes a raw exception object in ctx["error"] for any
+    # validator that raises a plain ValueError (e.g. the "at least one field
+    # required" validators) -- plain json.dumps can't serialize that, so it
+    # must go through jsonable_encoder (which stringifies it) like FastAPI's
+    # own default handler does, not straight into JSONResponse.
     return JSONResponse(
-        error_body("Validation failed", error.errors(), _request_id(request)),
+        error_body("Validation failed", jsonable_encoder(error.errors()), _request_id(request)),
         status_code=422,
     )
 

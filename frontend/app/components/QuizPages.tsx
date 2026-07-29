@@ -4,6 +4,23 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import {
+  ArrowLeft,
+  ArrowRight,
+  BarChart3,
+  BookOpen,
+  Check,
+  Clock,
+  FileText,
+  ListChecks,
+  Play,
+  Sparkles,
+  StickyNote,
+  Trash2,
+  X,
+  XCircle,
+  Zap,
+} from "lucide-react";
+import {
   PageShell,
   StudyDocument,
   XpAward,
@@ -174,7 +191,7 @@ export function QuizzesPage() {
         <div className="deck-grid">
           {topics.map((topic) => (
             <article className="deck-card" key={topic.id}>
-              <span className="topic-icon peach">◈</span>
+              <span className="topic-icon peach"><ListChecks size={20} strokeWidth={1.8} /></span>
               <h2>{topic.title}</h2>
               <p>{quizCounts[topic.id] ?? 0} quiz{quizCounts[topic.id] === 1 ? "" : "zes"}</p>
               <div className="deck-card-actions">
@@ -313,8 +330,8 @@ export function QuizTopicPage() {
       title={topic?.title ?? "Quizzes"}
       subtitle="Generate a new quiz, or pick up an existing one."
       action={<div className="page-actions">
-        <button className="button button-primary" onClick={() => setShowGenerate(true)}>✦ Generate quiz</button>
-        <Link className="back-topics" href="/quizzes">← All topics</Link>
+        <button className="button button-primary" onClick={() => setShowGenerate(true)}><Sparkles size={15} /> Generate quiz</button>
+        <Link className="back-topics" href="/quizzes"><ArrowLeft size={13} /> All topics</Link>
       </div>}
     >
       {error && <p className="page-error" role="alert">{error}</p>}
@@ -323,14 +340,14 @@ export function QuizTopicPage() {
           {quizzes.map((quiz) => (
             <article key={quiz.id}>
               <div>
-                <span>◈</span>
+                <span><ListChecks size={16} strokeWidth={1.8} /></span>
                 <div>
                   <h3>{quiz.title}</h3>
                   <div className="flashcard-meta">
                     <span className="quiz-difficulty-badge">{quiz.difficulty}</span>
-                    {quiz.adaptive && <span className="quiz-adaptive-badge">⚡ Adaptive</span>}
+                    {quiz.adaptive && <span className="quiz-adaptive-badge"><Zap size={11} /> Adaptive</span>}
                     <small>{quiz.questionCount} question{quiz.questionCount === 1 ? "" : "s"}</small>
-                    {quiz.timed && <small>⏱ {Math.round((quiz.time_limit_seconds ?? 0) / 60)} min</small>}
+                    {quiz.timed && <small><Clock size={11} /> {Math.round((quiz.time_limit_seconds ?? 0) / 60)} min</small>}
                     {quiz.latestAttempt && (
                       <small>Last score: {quiz.latestAttempt.score}%</small>
                     )}
@@ -339,11 +356,11 @@ export function QuizTopicPage() {
               </div>
               <div className="note-actions">
                 <Link className="note-action edit-action" href={`/quizzes/take?quizId=${quiz.id}`}>
-                  <span>▶</span>{quiz.latestAttempt ? "Retake" : "Take quiz"}
+                  <span><Play size={12} fill="currentColor" /></span>{quiz.latestAttempt ? "Retake" : "Take quiz"}
                 </Link>
                 {quiz.latestAttempt && (
                   <Link className="note-action" href={`/quizzes/results?attemptId=${quiz.latestAttempt.id}&topicId=${topicId}`}>
-                    <span>📊</span>Last results
+                    <span><BarChart3 size={13} /></span>Last results
                   </Link>
                 )}
                 <button className="danger-link" onClick={() => setDeletingQuiz(quiz)}>Delete</button>
@@ -359,8 +376,8 @@ export function QuizTopicPage() {
       {showGenerate && (
         <div className="modal-backdrop" onMouseDown={() => setShowGenerate(false)}>
           <form role="dialog" aria-modal="true" className="topic-modal action-modal quiz-generate-modal" onSubmit={generateQuiz} onMouseDown={(event) => event.stopPropagation()}>
-            <button type="button" className="modal-close" onClick={() => setShowGenerate(false)}>×</button>
-            <div className="modal-icon edit-icon">◈</div>
+            <button type="button" className="modal-close" onClick={() => setShowGenerate(false)}><X size={20} /></button>
+            <div className="modal-icon edit-icon"><ListChecks size={22} /></div>
             <div className="eyebrow">GENERATE A QUIZ</div>
             <h2>Generate quiz</h2>
             {genError && <p className="form-error">{genError}</p>}
@@ -451,8 +468,8 @@ export function QuizTopicPage() {
       {deletingQuiz && (
         <div className="modal-backdrop" onMouseDown={() => (deleting ? null : setDeletingQuiz(null))}>
           <div role="alertdialog" aria-modal="true" className="topic-modal action-modal delete-modal" onMouseDown={(event) => event.stopPropagation()}>
-            <button type="button" className="modal-close" disabled={deleting} onClick={() => setDeletingQuiz(null)}>×</button>
-            <div className="modal-icon delete-icon">🗑</div>
+            <button type="button" className="modal-close" disabled={deleting} onClick={() => setDeletingQuiz(null)}><X size={20} /></button>
+            <div className="modal-icon delete-icon"><Trash2 size={22} /></div>
             <div className="eyebrow">REMOVE THIS QUIZ</div>
             <h2>Delete “{deletingQuiz.title}”?</h2>
             <p>This removes the quiz, its questions, and every past attempt. This can&apos;t be undone.</p>
@@ -708,20 +725,20 @@ export function QuizTakePage() {
 
   if (!attempt) {
     return (
-      <PageShell title={quiz.title} subtitle="Review the setup, then start when you're ready." action={<Link className="back-topics" href={`/quizzes/topic?topicId=${quiz.topic_id}`}>← Back to quizzes</Link>}>
+      <PageShell title={quiz.title} subtitle="Review the setup, then start when you're ready." action={<Link className="back-topics" href={`/quizzes/topic?topicId=${quiz.topic_id}`}><ArrowLeft size={13} /> Back to quizzes</Link>}>
         {error && <p className="page-error" role="alert">{error}</p>}
         <section className="notes-panel quiz-intro-panel">
           <div className="flashcard-summary-row">
             <article className="flashcard-summary-stat">
-              <span className="stat-icon violet">▤</span>
+              <span className="stat-icon violet"><ListChecks size={18} strokeWidth={1.8} /></span>
               <div><small>QUESTIONS</small><strong>{questions.length}</strong></div>
             </article>
             <article className="flashcard-summary-stat">
-              <span className="stat-icon coral">◇</span>
+              <span className="stat-icon coral"><BookOpen size={18} strokeWidth={1.8} /></span>
               <div><small>DIFFICULTY</small><strong>{quiz.difficulty}</strong></div>
             </article>
             <article className="flashcard-summary-stat">
-              <span className="stat-icon mint">◷</span>
+              <span className="stat-icon mint"><Clock size={18} strokeWidth={1.8} /></span>
               <div><small>TIME LIMIT</small><strong>{quiz.timed ? `${Math.round((quiz.time_limit_seconds ?? 0) / 60)} min` : "None"}</strong></div>
             </article>
           </div>
@@ -730,7 +747,7 @@ export function QuizTakePage() {
             Show feedback after each question (otherwise, see it all at the end)
           </label>
           <button className="button button-primary" disabled={starting || !questions.length} onClick={() => void startQuiz()}>
-            {starting ? "Starting…" : "▶ Start quiz"}
+            {starting ? "Starting…" : <><Play size={13} fill="currentColor" /> Start quiz</>}
           </button>
         </section>
       </PageShell>
@@ -744,7 +761,7 @@ export function QuizTakePage() {
     <PageShell
       title={quiz.title}
       subtitle="Rate your certainty, answer honestly, and move on."
-      action={quiz.timed && timeRemaining != null ? <span className="quiz-timer">⏱ {formatSeconds(timeRemaining)}</span> : undefined}
+      action={quiz.timed && timeRemaining != null ? <span className="quiz-timer"><Clock size={14} /> {formatSeconds(timeRemaining)}</span> : undefined}
     >
       {xpToast && <XpToast award={xpToast} onDismiss={() => setXpToast(null)} />}
       {error && <p className="page-error" role="alert">{error}</p>}
@@ -752,7 +769,7 @@ export function QuizTakePage() {
         <div className="quiz-taking-panel">
           <div className="review-progress">
             Question {currentIndex + 1} of {questions.length} · {QUESTION_TYPE_LABELS[currentQuestion.questionType]}
-            {quiz.adaptive && <span className="quiz-adaptive-badge">⚡ {difficultyLabel(currentQuestion.difficultyScore)}</span>}
+            {quiz.adaptive && <span className="quiz-adaptive-badge"><Zap size={11} /> {difficultyLabel(currentQuestion.difficultyScore)}</span>}
           </div>
           <article className="review-card quiz-question-card">
             <div className="review-card-question">
@@ -771,7 +788,7 @@ export function QuizTakePage() {
                 <p>{currentFeedback.explanation}</p>
                 {sourceLabel(currentFeedback) && (
                   <Link className="source-chip document" href={`/topic?id=${quiz.topic_id}`}>
-                    {currentFeedback.sourceType === "note" ? "▤" : "📄"} {sourceLabel(currentFeedback)}
+                    {currentFeedback.sourceType === "note" ? <StickyNote size={12} /> : <FileText size={12} />} {sourceLabel(currentFeedback)}
                   </Link>
                 )}
               </div>
@@ -779,7 +796,7 @@ export function QuizTakePage() {
           </article>
           <div className="quiz-taking-actions">
             {currentIndex > 0 && (
-              <button type="button" className="button button-secondary" onClick={() => goToIndex(currentIndex - 1)}>← Previous</button>
+              <button type="button" className="button button-secondary" onClick={() => goToIndex(currentIndex - 1)}><ArrowLeft size={13} /> Previous</button>
             )}
             {immediateFeedback && !hasAnsweredCurrent && (
               <button type="button" className="button button-primary" disabled={submitting} onClick={() => void submitCurrent()}>
@@ -788,14 +805,14 @@ export function QuizTakePage() {
             )}
             {immediateFeedback && hasAnsweredCurrent && (
               <button type="button" className="button button-primary" disabled={completing} onClick={advance}>
-                {currentIndex + 1 < questions.length ? "Next question →" : (completing ? "Finishing…" : "Finish quiz")}
+                {currentIndex + 1 < questions.length ? <>Next question <ArrowRight size={13} /></> : (completing ? "Finishing…" : "Finish quiz")}
               </button>
             )}
             {!immediateFeedback && (
               <button type="button" className="button button-primary" disabled={submitting || completing} onClick={() => void submitCurrent()}>
                 {submitting || completing
                   ? "Saving…"
-                  : currentIndex + 1 < questions.length ? "Next question →" : "Finish quiz"}
+                  : currentIndex + 1 < questions.length ? <>Next question <ArrowRight size={13} /></> : "Finish quiz"}
               </button>
             )}
           </div>
@@ -937,7 +954,7 @@ export function QuizResultsPage() {
     <PageShell
       title="Quiz results"
       subtitle={results ? `${results.correctCount} of ${results.totalCount} correct` : "Loading your results…"}
-      action={hasTopic ? <Link className="back-topics" href={`/quizzes/topic?topicId=${topicId}`}>← Back to quizzes</Link> : undefined}
+      action={hasTopic ? <Link className="back-topics" href={`/quizzes/topic?topicId=${topicId}`}><ArrowLeft size={13} /> Back to quizzes</Link> : undefined}
     >
       {error && <p className="page-error" role="alert">{error}</p>}
       {loading ? <div className="empty">Loading your results…</div> : results && (
@@ -948,11 +965,11 @@ export function QuizResultsPage() {
               <div><small>SCORE</small><strong>{results.score}%</strong></div>
             </article>
             <article className="flashcard-summary-stat">
-              <span className="stat-icon mint">✓</span>
+              <span className="stat-icon mint"><Check size={18} strokeWidth={2.2} /></span>
               <div><small>CORRECT</small><strong>{results.correctCount} / {results.totalCount}</strong></div>
             </article>
             <article className="flashcard-summary-stat">
-              <span className="stat-icon coral">◷</span>
+              <span className="stat-icon coral"><Clock size={18} strokeWidth={1.8} /></span>
               <div><small>TIME SPENT</small><strong>{formatSeconds(results.timeSpentSeconds)}</strong></div>
             </article>
           </div>
@@ -988,7 +1005,7 @@ export function QuizResultsPage() {
             )}
             {!!results.conceptsToReview.length && hasTopic && (
               <button className="button button-primary quiz-follow-up-button" disabled={generatingFollowUp} onClick={() => void generateFollowUp()}>
-                {generatingFollowUp ? "Generating…" : "✦ Generate follow-up quiz on weak areas"}
+                {generatingFollowUp ? "Generating…" : <><Sparkles size={14} /> Generate follow-up quiz on weak areas</>}
               </button>
             )}
           </section>
@@ -999,7 +1016,7 @@ export function QuizResultsPage() {
               {results.answers.map((answer, index) => (
                 <article key={answer.questionId} className={answer.isCorrect ? "quiz-answer-correct" : "quiz-answer-incorrect"}>
                   <div>
-                    <span>{answer.isCorrect ? "✓" : "✕"}</span>
+                    <span>{answer.isCorrect ? <Check size={13} strokeWidth={2.5} /> : <XCircle size={13} />}</span>
                     <div>
                       <h3>{index + 1}. {answer.prompt}</h3>
                       <p>{answer.explanation}</p>
@@ -1007,7 +1024,7 @@ export function QuizResultsPage() {
                         <span className="quiz-difficulty-badge">{answer.concept}</span>
                         {sourceLabel(answer) && (
                           <Link className="source-chip document" href={hasTopic ? `/topic?id=${topicId}` : "/topics"}>
-                            {answer.sourceType === "note" ? "▤" : "📄"} {sourceLabel(answer)}
+                            {answer.sourceType === "note" ? <StickyNote size={12} /> : <FileText size={12} />} {sourceLabel(answer)}
                           </Link>
                         )}
                       </div>
@@ -1036,7 +1053,7 @@ export function QuizResultsPage() {
                             disabled={drillingFor === answer.questionId}
                             onClick={() => void drillQuestion(answer.questionId)}
                           >
-                            {drillingFor === answer.questionId ? "Generating…" : "Drill this →"}
+                            {drillingFor === answer.questionId ? "Generating…" : <>Drill this <ArrowRight size={13} /></>}
                           </button>
                         </div>
                       )}

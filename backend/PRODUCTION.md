@@ -24,17 +24,17 @@ instance.
 
 ## Security and operations
 
-The app enforces its own rate limits in-process (general API, auth, and AI
-tiers -- see `app/core/security.py`); these use in-memory counters, so they
-reset per instance and don't coordinate across multiple replicas. Put a
-shared rate limiter in front (API gateway or a Redis-backed limiter) if you
-run more than one instance and need a single global limit. Forward
+The app enforces its own rate limits (general API, auth, and AI tiers -- see
+`app/core/security.py`). By default counters are in-memory, so they reset
+per instance and don't coordinate across multiple replicas. Set `REDIS_URL`
+to share counters across replicas instead; if Redis becomes unreachable,
+limits fall back to per-instance memory automatically rather than failing
+requests. Forward
 stdout/stderr to the hosting platform's logs (JSON in production, with
 password/cookie/authorization fields redacted). Every response includes
 `X-Request-Id`.
 
-Run `alembic upgrade head` before a new release (the provided `Dockerfile`
-does this automatically on container start). Enable automated PostgreSQL
+Run `alembic upgrade head` before a new release. Enable automated PostgreSQL
 backups and test restore procedures.
 
 Sessions are stored server-side in the `user_sessions` table; there's nothing
@@ -50,8 +50,8 @@ running more than one instance or a platform with ephemeral filesystems.
 
 ## Deployment
 
-Build and run the provided `Dockerfile`, or run directly with an ASGI process
-manager:
+Install `requirements.txt`, apply migrations, and run the application with an
+ASGI process manager:
 
 ```bash
 alembic upgrade head

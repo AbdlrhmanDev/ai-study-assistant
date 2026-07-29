@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ArrowLeft, RefreshCw, Search, Sparkles } from "lucide-react";
 import { PageShell, useAuthFailure } from "./BackendPages";
 import { api, Topic, messageFromError } from "../lib/api";
 
@@ -81,6 +82,23 @@ function computeLayout(nodes: GraphNode[], edges: GraphEdge[]): Map<number, Layo
       node.y += node.vy;
     }
   }
+
+  // The repulsion/spring forces can drift the whole cluster off-center as a
+  // rigid body faster than the (deliberately weak, so it doesn't fight the
+  // layout) centering force can correct -- recenter the finished layout's
+  // centroid to the canvas center so it's never off-balance regardless of
+  // how the simulation happened to converge.
+  if (all.length > 0) {
+    const centroidX = all.reduce((sum, node) => sum + node.x, 0) / all.length;
+    const centroidY = all.reduce((sum, node) => sum + node.y, 0) / all.length;
+    const offsetX = CANVAS_WIDTH / 2 - centroidX;
+    const offsetY = CANVAS_HEIGHT / 2 - centroidY;
+    for (const node of all) {
+      node.x += offsetX;
+      node.y += offsetY;
+    }
+  }
+
   return positions;
 }
 
@@ -322,9 +340,9 @@ export function KnowledgeGraphPage() {
       subtitle="How the concepts in this topic connect -- weak concepts stay visually prominent."
       action={<div className="page-actions">
         <button className="button button-secondary" disabled={rebuilding} onClick={() => void rebuild()}>
-          {rebuilding ? "Building…" : graph?.nodes.length ? "↻ Rebuild graph" : "✦ Build knowledge graph"}
+          {rebuilding ? "Building…" : graph?.nodes.length ? <><RefreshCw size={14} /> Rebuild graph</> : <><Sparkles size={14} /> Build knowledge graph</>}
         </button>
-        <Link className="back-topics" href={`/topic?id=${topicId}`}>← Back to topic</Link>
+        <Link className="back-topics" href={`/topic?id=${topicId}`}><ArrowLeft size={13} /> Back to topic</Link>
       </div>}
     >
       {error && <p className="page-error" role="alert">{error}</p>}
@@ -333,18 +351,18 @@ export function KnowledgeGraphPage() {
           {graph?.belowMinimum && !graph.nodes.length ? (
             <div className="empty">
               Not enough concepts yet to build a meaningful graph -- add a few more notes or documents, then generate the graph.
-              <div><button className="button button-primary" disabled={rebuilding} onClick={() => void rebuild()}>{rebuilding ? "Building…" : "✦ Build knowledge graph"}</button></div>
+              <div><button className="button button-primary" disabled={rebuilding} onClick={() => void rebuild()}>{rebuilding ? "Building…" : <><Sparkles size={14} /> Build knowledge graph</>}</button></div>
             </div>
           ) : !graph?.nodes.length ? (
             <div className="empty">
               No graph yet for this topic.
-              <div><button className="button button-primary" disabled={rebuilding} onClick={() => void rebuild()}>{rebuilding ? "Building…" : "✦ Build knowledge graph"}</button></div>
+              <div><button className="button button-primary" disabled={rebuilding} onClick={() => void rebuild()}>{rebuilding ? "Building…" : <><Sparkles size={14} /> Build knowledge graph</>}</button></div>
             </div>
           ) : (
             <div className="graph-layout">
               <section className="graph-canvas-panel">
                 <div className="graph-search">
-                  <span>⌕</span>
+                  <span><Search size={15} /></span>
                   <input value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} placeholder="Search concepts…" />
                 </div>
                 <canvas
@@ -393,7 +411,7 @@ export function KnowledgeGraphPage() {
                       </div>
                     )}
                     <Link className="button button-primary graph-ask-tutor" href={`/ai-tutor?topicId=${topicId}&concept=${encodeURIComponent(selectedNode.name)}`}>
-                      ✦ Ask the tutor about this
+                      <Sparkles size={14} /> Ask the tutor about this
                     </Link>
                   </>
                 ) : (

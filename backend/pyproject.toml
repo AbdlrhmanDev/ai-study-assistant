@@ -7,4 +7,12 @@ requires-python = ">=3.11"
 pythonpath = ["."]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+# get_engine()/get_sessionmaker() (app/db/session.py) are process-wide
+# lru_cache singletons -- fine in production (one event loop per worker),
+# but pytest-asyncio's default per-test event loop meant connections created
+# on one test's loop got reused/closed from a different test's loop,
+# producing intermittent "Event loop is closed" errors at teardown. Sharing
+# one event loop for the whole session matches the singleton's assumption.
+asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"
 

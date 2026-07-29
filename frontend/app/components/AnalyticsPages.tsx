@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { Clock, Flame, Layers, Target } from "lucide-react";
 import { PageShell, useAuthFailure } from "./BackendPages";
 import { api, messageFromError } from "../lib/api";
 
@@ -75,7 +76,7 @@ export function AnalyticsPage() {
         <>
           <div className="stats">
             <article>
-              <span className="stat-icon violet">◷</span>
+              <span className="stat-icon violet"><Clock size={18} strokeWidth={1.8} /></span>
               <div>
                 <small>THIS WEEK</small>
                 <strong>{overview.activitiesThisWeek}</strong>
@@ -83,7 +84,7 @@ export function AnalyticsPage() {
               </div>
             </article>
             <article>
-              <span className="stat-icon fire">🔥</span>
+              <span className="stat-icon fire"><Flame size={18} strokeWidth={1.8} /></span>
               <div>
                 <small>STREAK</small>
                 <strong>{overview.currentStreak}</strong>
@@ -91,7 +92,7 @@ export function AnalyticsPage() {
               </div>
             </article>
             <article>
-              <span className="stat-icon mint">◆</span>
+              <span className="stat-icon mint"><Layers size={18} strokeWidth={1.8} /></span>
               <div>
                 <small>TOTAL XP</small>
                 <strong>{overview.totalXp}</strong>
@@ -99,7 +100,7 @@ export function AnalyticsPage() {
               </div>
             </article>
             <article>
-              <span className="stat-icon coral">◈</span>
+              <span className="stat-icon coral"><Target size={18} strokeWidth={1.8} /></span>
               <div>
                 <small>AVG MASTERY</small>
                 <strong>

@@ -24,6 +24,7 @@ export type Pagination = {
   totalPages: number;
 };
 
+
 export class ApiError extends Error {
   constructor(
     message: string,

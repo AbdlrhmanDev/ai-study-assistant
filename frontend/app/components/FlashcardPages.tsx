@@ -4,6 +4,24 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import {
+  ArrowLeft,
+  ArrowUp,
+  BookOpen,
+  ChevronDown,
+  Clock,
+  Download,
+  FileText,
+  ListChecks,
+  Pencil,
+  Play,
+  Plus,
+  RefreshCw,
+  Sparkles,
+  StickyNote,
+  Trash2,
+  X,
+} from "lucide-react";
+import {
   PageShell,
   StudyDocument,
   XpAward,
@@ -132,7 +150,7 @@ export function FlashcardsPage() {
       {summary && (
         <div className="flashcard-summary-row">
           <article className="flashcard-summary-stat">
-            <span className="stat-icon violet">▤</span>
+            <span className="stat-icon violet"><StickyNote size={18} strokeWidth={1.8} /></span>
             <div><small>DUE TODAY</small><strong>{summary.due_today}</strong></div>
           </article>
           <article className="flashcard-summary-stat">
@@ -144,7 +162,7 @@ export function FlashcardsPage() {
             <div><small>RETENTION</small><strong>{summary.retention_rate != null ? `${summary.retention_rate}%` : "—"}</strong></div>
           </article>
           <article className="flashcard-summary-stat">
-            <span className="stat-icon violet">◷</span>
+            <span className="stat-icon violet"><Clock size={18} strokeWidth={1.8} /></span>
             <div><small>NEXT REVIEW</small><strong>{formatRelativeDue(summary.next_review_at)}</strong></div>
           </article>
         </div>
@@ -155,7 +173,7 @@ export function FlashcardsPage() {
             const stats = deckStats[topic.id];
             return (
               <article className="deck-card" key={topic.id}>
-                <span className="topic-icon purple">◇</span>
+                <span className="topic-icon purple"><BookOpen size={18} strokeWidth={1.8} /></span>
                 <h2>{topic.title}</h2>
                 <p>{stats ? `${stats.total} card${stats.total === 1 ? "" : "s"}` : "Loading…"}</p>
                 {stats && (
@@ -400,20 +418,20 @@ export function FlashcardsDeckPage() {
       title={topic?.title ?? "Flashcards"}
       subtitle="Manage this deck's cards, or start a review session."
       action={<div className="page-actions">
-        <button className="button button-secondary" onClick={() => void exportFlashcards()}>⇩ Export CSV</button>
-        <Link className="button button-primary" href={`/flashcards/review?topicId=${topicId}`}>▶ Start review</Link>
-        <Link className="back-topics" href="/flashcards">← All decks</Link>
+        <button className="button button-secondary" onClick={() => void exportFlashcards()}><Download size={14} /> Export CSV</button>
+        <Link className="button button-primary" href={`/flashcards/review?topicId=${topicId}`}><Play size={13} fill="currentColor" /> Start review</Link>
+        <Link className="back-topics" href="/flashcards"><ArrowLeft size={13} /> All decks</Link>
       </div>}
     >
       {error && <p className="page-error" role="alert">{error}</p>}
       {stats && (
         <div className="flashcard-summary-row">
           <article className="flashcard-summary-stat">
-            <span className="stat-icon violet">▤</span>
+            <span className="stat-icon violet"><StickyNote size={18} strokeWidth={1.8} /></span>
             <div><small>TOTAL CARDS</small><strong>{stats.total}</strong></div>
           </article>
           <article className="flashcard-summary-stat">
-            <span className="stat-icon coral">◷</span>
+            <span className="stat-icon coral"><Clock size={18} strokeWidth={1.8} /></span>
             <div><small>DUE TODAY</small><strong>{stats.due_today}</strong></div>
           </article>
           <article className="flashcard-summary-stat">
@@ -433,8 +451,8 @@ export function FlashcardsDeckPage() {
             <button className={statusFilter === "archived" ? "active" : ""} onClick={() => setStatusFilter("archived")}>Archived</button>
           </div>
           <div className="page-actions">
-            <button className="add-note-button" onClick={() => setShowAdd(true)}>＋ Add card</button>
-            <button className="add-note-button" onClick={() => setShowGenerate(true)}>✦ Generate with AI</button>
+            <button className="add-note-button" onClick={() => setShowAdd(true)}><Plus size={14} strokeWidth={2.2} /> Add card</button>
+            <button className="add-note-button" onClick={() => setShowGenerate(true)}><Sparkles size={14} /> Generate with AI</button>
           </div>
         </div>
         {loading ? <div className="empty">Loading cards…</div> : (
@@ -442,7 +460,7 @@ export function FlashcardsDeckPage() {
             {cards.map((card) => (
               <article key={card.id}>
                 <div>
-                  <span>{card.origin === "ai" ? "✦" : "▤"}</span>
+                  <span>{card.origin === "ai" ? <Sparkles size={16} strokeWidth={1.8} /> : <StickyNote size={16} strokeWidth={1.8} />}</span>
                   <div>
                     <h3>{card.question}</h3>
                     <p>{card.answer}</p>
@@ -452,7 +470,7 @@ export function FlashcardsDeckPage() {
                       </span>
                       {sourceLabel(card) && (
                         <Link className="source-chip document" href={`/topic?id=${topicId}`}>
-                          {card.sourceType === "note" ? "▤" : "📄"} {sourceLabel(card)}
+                          {card.sourceType === "note" ? <StickyNote size={11} /> : <FileText size={11} />} {sourceLabel(card)}
                         </Link>
                       )}
                       {card.last_rating && <small>Last: {card.last_rating}</small>}
@@ -460,14 +478,14 @@ export function FlashcardsDeckPage() {
                   </div>
                 </div>
                 <div className="note-actions">
-                  <button className="note-action edit-action" onClick={() => setEditingCard(card)}><span>✎</span>Edit</button>
+                  <button className="note-action edit-action" onClick={() => setEditingCard(card)}><span><Pencil size={13} /></span>Edit</button>
                   {card.sourceType && (
                     <button
                       className="note-action"
                       disabled={busyCardId === card.id}
                       onClick={() => void regenerateCard(card)}
                     >
-                      <span>↻</span>{busyCardId === card.id ? "…" : "Regenerate"}
+                      <span><RefreshCw size={13} /></span>{busyCardId === card.id ? "…" : "Regenerate"}
                     </button>
                   )}
                   <button
@@ -475,7 +493,7 @@ export function FlashcardsDeckPage() {
                     disabled={busyCardId === card.id}
                     onClick={() => void toggleArchive(card)}
                   >
-                    <span>{card.status === "archived" ? "↥" : "▾"}</span>
+                    <span>{card.status === "archived" ? <ArrowUp size={13} /> : <ChevronDown size={13} />}</span>
                     {card.status === "archived" ? "Restore" : "Archive"}
                   </button>
                   <button className="danger-link" onClick={() => setDeletingCard(card)}>Delete</button>
@@ -496,8 +514,8 @@ export function FlashcardsDeckPage() {
       {showAdd && (
         <div className="modal-backdrop" onMouseDown={() => setShowAdd(false)}>
           <form role="dialog" aria-modal="true" className="topic-modal note-modal action-modal" onSubmit={createCard} onMouseDown={(event) => event.stopPropagation()}>
-            <button type="button" className="modal-close" onClick={() => setShowAdd(false)}>×</button>
-            <div className="modal-icon edit-icon">＋</div>
+            <button type="button" className="modal-close" onClick={() => setShowAdd(false)}><X size={20} /></button>
+            <div className="modal-icon edit-icon"><Plus size={22} strokeWidth={2.2} /></div>
             <div className="eyebrow">ADD A FLASHCARD</div>
             <h2>New flashcard</h2>
             {actionError && <p className="form-error">{actionError}</p>}
@@ -534,8 +552,8 @@ export function FlashcardsDeckPage() {
       {showGenerate && (
         <div className="modal-backdrop" onMouseDown={() => setShowGenerate(false)}>
           <form role="dialog" aria-modal="true" className="topic-modal action-modal" onSubmit={generateCards} onMouseDown={(event) => event.stopPropagation()}>
-            <button type="button" className="modal-close" onClick={() => setShowGenerate(false)}>×</button>
-            <div className="modal-icon edit-icon">✦</div>
+            <button type="button" className="modal-close" onClick={() => setShowGenerate(false)}><X size={20} /></button>
+            <div className="modal-icon edit-icon"><Sparkles size={22} /></div>
             <div className="eyebrow">GENERATE WITH AI</div>
             <h2>Generate flashcards</h2>
             <p>The tutor will read the selected material and draft question/answer/explanation cards.</p>
@@ -586,8 +604,8 @@ export function FlashcardsDeckPage() {
       {editingCard && (
         <div className="modal-backdrop" onMouseDown={() => setEditingCard(null)}>
           <form role="dialog" aria-modal="true" className="topic-modal note-modal action-modal" onSubmit={updateCard} onMouseDown={(event) => event.stopPropagation()}>
-            <button type="button" className="modal-close" onClick={() => setEditingCard(null)}>×</button>
-            <div className="modal-icon edit-icon">✎</div>
+            <button type="button" className="modal-close" onClick={() => setEditingCard(null)}><X size={20} /></button>
+            <div className="modal-icon edit-icon"><Pencil size={22} /></div>
             <div className="eyebrow">REFINE THIS CARD</div>
             <h2>Edit flashcard</h2>
             {actionError && <p className="form-error">{actionError}</p>}
@@ -605,8 +623,8 @@ export function FlashcardsDeckPage() {
       {deletingCard && (
         <div className="modal-backdrop" onMouseDown={() => (savingAction ? null : setDeletingCard(null))}>
           <div role="alertdialog" aria-modal="true" className="topic-modal action-modal delete-modal" onMouseDown={(event) => event.stopPropagation()}>
-            <button type="button" className="modal-close" disabled={savingAction} onClick={() => setDeletingCard(null)}>×</button>
-            <div className="modal-icon delete-icon">🗑</div>
+            <button type="button" className="modal-close" disabled={savingAction} onClick={() => setDeletingCard(null)}><X size={20} /></button>
+            <div className="modal-icon delete-icon"><Trash2 size={22} /></div>
             <div className="eyebrow">REMOVE THIS CARD</div>
             <h2>Delete this flashcard?</h2>
             <p>“{deletingCard.question}” will be removed along with its review history. This can&apos;t be undone.</p>
@@ -702,7 +720,7 @@ export function FlashcardsReviewPage() {
     <PageShell
       title={topic ? `Review: ${topic.title}` : "Review"}
       subtitle="Rate each card honestly — it decides when you'll see it again."
-      action={<Link className="back-topics" href="/flashcards">← All decks</Link>}
+      action={<Link className="back-topics" href="/flashcards"><ArrowLeft size={13} /> All decks</Link>}
     >
       {xpToast && <XpToast award={xpToast} onDismiss={() => setXpToast(null)} />}
       {error && <p className="page-error" role="alert">{error}</p>}
@@ -726,7 +744,7 @@ export function FlashcardsReviewPage() {
                 {currentCard.explanation && <p className="review-card-explanation">{currentCard.explanation}</p>}
                 {sourceLabel(currentCard) && (
                   <Link className="source-chip document" href={`/topic?id=${topicId}`}>
-                    {currentCard.sourceType === "note" ? "▤" : "📄"} {sourceLabel(currentCard)}
+                    {currentCard.sourceType === "note" ? <StickyNote size={12} /> : <FileText size={12} />} {sourceLabel(currentCard)}
                   </Link>
                 )}
               </div>

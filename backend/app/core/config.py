@@ -43,6 +43,10 @@ class Settings(BaseSettings):
     api_rate_limit: int = Field(300, alias="API_RATE_LIMIT", ge=1)
     auth_rate_limit: int = Field(10, alias="AUTH_RATE_LIMIT", ge=1)
     ai_rate_limit: int = Field(30, alias="AI_RATE_LIMIT", ge=1)
+    # When set, rate limit counters are stored in Redis so they're shared
+    # across replicas instead of each instance counting independently.
+    # Falls back to in-process memory (per-instance limits) when empty.
+    redis_url: str = Field("", alias="REDIS_URL")
 
     ai_provider: str = Field("gemini", alias="AI_PROVIDER")
     gemini_api_key: str = Field("", alias="GEMINI_API_KEY")

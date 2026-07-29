@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { FormEvent, useCallback, useEffect, useState } from "react";
+import { Check, RefreshCw } from "lucide-react";
 import { PageShell, useAuthFailure } from "./BackendPages";
 import { api, Topic, messageFromError } from "../lib/api";
 
@@ -171,7 +172,7 @@ export function CoachPage() {
       subtitle="A ranked, time-boxed plan built from your weakest concepts and upcoming exams."
       action={
         <button className="button button-secondary" disabled={regenerating} onClick={() => void regenerate()}>
-          {regenerating ? "Regenerating…" : "↻ Regenerate plan"}
+          {regenerating ? "Regenerating…" : <><RefreshCw size={14} /> Regenerate plan</>}
         </button>
       }
     >
@@ -200,7 +201,7 @@ export function CoachPage() {
                     aria-label={task.status === "completed" ? "Mark as not done" : "Mark as done"}
                     onClick={() => void setTaskStatus(task.id, task.status === "completed" ? "pending" : "completed")}
                   >
-                    {task.status === "completed" ? "✓" : ""}
+                    {task.status === "completed" ? <Check size={13} strokeWidth={3} /> : ""}
                   </button>
                   <Link href={`/topic?id=${task.topicId}`} className="coach-task-title">
                     <strong>{task.title}</strong>

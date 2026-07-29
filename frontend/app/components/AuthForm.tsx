@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FormEvent, useState } from "react";
+import { ArrowRight, Eye, EyeOff, Lock, Mail, Sparkles, User as UserIcon } from "lucide-react";
 import { api, messageFromError, User } from "../lib/api";
 
 export default function AuthForm({ mode }: { mode: "login" | "register" }) {
@@ -54,22 +55,35 @@ export default function AuthForm({ mode }: { mode: "login" | "register" }) {
         <div className="auth-card">
           <Link className="mobile-brand brand" href="/"><span className="brand-mark">s</span>studia</Link>
           <div className="auth-heading">
-            <div className="eyebrow"><span>✦</span> {isLogin ? "WELCOME BACK" : "YOUR LEARNING STARTS HERE"}</div>
+            <div className="eyebrow"><span><Sparkles size={13} /></span> {isLogin ? "WELCOME BACK" : "YOUR LEARNING STARTS HERE"}</div>
             <h1>{isLogin ? "Continue your journey." : "Create your account."}</h1>
             <p>{isLogin ? "Sign in to pick up right where you left off." : "Join Studia and make every study session count."}</p>
           </div>
           <form onSubmit={submit}>
-            {!isLogin && <label>Full name<input name="name" required minLength={2} placeholder="e.g. Maya Ahmed" autoComplete="name" /></label>}
-            <label>Email address<input name="email" required type="email" placeholder="you@example.com" autoComplete="email" /></label>
+            {!isLogin && (
+              <label>Full name
+                <div className="input-icon-wrap">
+                  <UserIcon size={16} strokeWidth={1.8} />
+                  <input name="name" required minLength={2} placeholder="e.g. Maya Ahmed" autoComplete="name" />
+                </div>
+              </label>
+            )}
+            <label>Email address
+              <div className="input-icon-wrap">
+                <Mail size={16} strokeWidth={1.8} />
+                <input name="email" required type="email" placeholder="you@example.com" autoComplete="email" />
+              </div>
+            </label>
             <label>Password
-              <div className="password-wrap">
+              <div className="input-icon-wrap password-wrap">
+                <Lock size={16} strokeWidth={1.8} />
                 <input name="password" required minLength={isLogin ? 1 : 8} type={showPassword ? "text" : "password"} placeholder={isLogin ? "Enter your password" : "At least 8 characters"} autoComplete={isLogin ? "current-password" : "new-password"} />
-                <button type="button" onClick={() => setShowPassword(!showPassword)} aria-label={showPassword ? "Hide password" : "Show password"}>{showPassword ? "Hide" : "Show"}</button>
+                <button type="button" className="password-toggle" onClick={() => setShowPassword(!showPassword)} aria-label={showPassword ? "Hide password" : "Show password"}>{showPassword ? <EyeOff size={16} strokeWidth={1.8} /> : <Eye size={16} strokeWidth={1.8} />}</button>
               </div>
             </label>
             {error && <p className="form-error" role="alert">{error}</p>}
             <button disabled={loading} className="button button-primary auth-submit" type="submit">
-              {loading ? "Just a moment…" : isLogin ? "Sign in to Studia" : "Create my account"} <span>→</span>
+              {loading ? "Just a moment…" : isLogin ? "Sign in to Studia" : "Create my account"} <span><ArrowRight size={15} /></span>
             </button>
           </form>
           <div className="auth-switch">{isLogin ? "New to Studia?" : "Already have an account?"} <Link href={isLogin ? "/register" : "/login"}>{isLogin ? "Create an account" : "Sign in"}</Link></div>

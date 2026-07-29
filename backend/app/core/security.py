@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 import bcrypt
 from fastapi.concurrency import run_in_threadpool
 from limits import parse
-from limits.storage import MemoryStorage
+from limits.storage import MemoryStorage, storage_from_string
 from limits.strategies import FixedWindowRateLimiter
 from slowapi import Limiter
 from slowapi.util import get_remote_address
@@ -21,6 +21,7 @@ from ..modules.auth import repository as session_repository
 from ..shared.responses import error_body
 from .config import get_settings
 from .exceptions import AppError
+from .logging import logger
 
 # --------------------------------------------------------------------------
 # Password hashing
@@ -155,10 +156,27 @@ class SessionMiddleware(BaseHTTPMiddleware):
 # --------------------------------------------------------------------------
 # Rate limiting
 # --------------------------------------------------------------------------
+#
+# Counters live in Redis (shared across replicas) when REDIS_URL is set, and
+# in per-process memory otherwise -- see PRODUCTION.md. If Redis is briefly
+# unreachable, slowapi's in-memory fallback keeps requests flowing (each
+# instance just reverts to counting independently until Redis recovers)
+# rather than 500ing every request.
+
+
+def _rate_limit_storage_uri() -> str:
+    return get_settings().redis_url or "memory://"
+
+
+_default_api_limit = f"{get_settings().api_rate_limit}/15minutes"
 
 limiter = Limiter(
     key_func=get_remote_address,
-    default_limits=[f"{get_settings().api_rate_limit}/15minutes"],
+    default_limits=[_default_api_limit],
+    storage_uri=_rate_limit_storage_uri(),
+    swallow_errors=True,
+    in_memory_fallback_enabled=True,
+    in_memory_fallback=[_default_api_limit],
 )
 
 
@@ -178,7 +196,10 @@ async def rate_limit_exceeded_handler(request: Request, _exc: Exception) -> JSON
 # Auth tier (register/login): counts only failed attempts, mirroring Express's
 # `skipSuccessfulRequests: true`. slowapi's decorator API has no such option,
 # so this is implemented directly against the `limits` library slowapi wraps.
-_auth_limiter_storage = MemoryStorage()
+# Unlike the general `limiter` above, this bypasses slowapi entirely, so it
+# doesn't get slowapi's built-in in-memory fallback -- fail open ourselves
+# below instead of letting a Redis outage block every login attempt.
+_auth_limiter_storage = storage_from_string(_rate_limit_storage_uri())
 _auth_limiter_strategy = FixedWindowRateLimiter(_auth_limiter_storage)
 
 
@@ -188,13 +209,21 @@ def _auth_limit_item():
 
 def check_auth_rate_limit(request: Request) -> None:
     key = get_remote_address(request)
-    if not _auth_limiter_strategy.test(_auth_limit_item(), key):
+    try:
+        allowed = _auth_limiter_strategy.test(_auth_limit_item(), key)
+    except Exception as error:
+        logger.warning("auth_rate_limiter_storage_unavailable", error=str(error))
+        return
+    if not allowed:
         raise AppError("Too many requests, please try again later", 429)
 
 
 def record_auth_failure(request: Request) -> None:
     key = get_remote_address(request)
-    _auth_limiter_strategy.hit(_auth_limit_item(), key)
+    try:
+        _auth_limiter_strategy.hit(_auth_limit_item(), key)
+    except Exception as error:
+        logger.warning("auth_rate_limiter_storage_unavailable", error=str(error))
 
 
 def reset_auth_rate_limiter_for_testing() -> None:

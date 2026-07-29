@@ -7,6 +7,7 @@ layer -- they only close a SAVEPOINT, never the outer transaction."""
 import uuid
 from collections.abc import AsyncIterator
 
+import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -77,3 +78,21 @@ async def authed_client(client: AsyncClient, test_user: User) -> AsyncIterator[A
     fastapi_app.dependency_overrides[get_current_user] = override_get_current_user
     yield client
     fastapi_app.dependency_overrides.pop(get_current_user, None)
+
+
+@pytest.fixture
+def mock_ai_generate(monkeypatch):
+    """Stubs `ai.provider.generate` so quiz/exam/flashcard generation (and
+    rubric grading) doesn't make real network calls to an AI provider.
+    Call with a raw response string; each call sets the response for every
+    subsequent `provider.generate()` until changed again."""
+    import app.modules.ai.provider as provider
+
+    def _set(response_text: str) -> None:
+        async def _fake_generate(prompt: str, instructions: str = "") -> tuple[str, str, str]:
+            return response_text, "mock", "mock-model"
+
+        monkeypatch.setattr(provider, "generate", _fake_generate)
+
+    _set("[]")
+    return _set

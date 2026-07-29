@@ -3,7 +3,33 @@
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { FormEvent, ReactNode, useCallback, useEffect, useState } from "react";
+import {
+  ArrowLeft,
+  ArrowRight,
+  Bot,
+  BookOpen,
+  Brain,
+  Check,
+  ChevronDown,
+  ChevronUp,
+  Download,
+  FileText,
+  FolderInput,
+  GitBranch,
+  Network,
+  PartyPopper,
+  Pencil,
+  Plus,
+  Search,
+  Sparkles,
+  StickyNote,
+  Swords,
+  Trash2,
+  Trophy,
+  X,
+} from "lucide-react";
 import AppSidebar from "./AppSidebar";
+import { useTheme } from "./ThemeProvider";
 import {
   api,
   ApiError,
@@ -59,12 +85,12 @@ export function XpToast({ award, onDismiss }: { award: XpAward; onDismiss: () =>
     <div className={`xp-toast${award.leveledUp ? " level-up" : ""}`} role="status">
       {award.leveledUp ? (
         <>
-          <span className="xp-toast-icon">🎉</span>
+          <span className="xp-toast-icon"><PartyPopper size={18} /></span>
           <div><strong>Level up!</strong><p>Now {award.newLevelName}</p></div>
         </>
       ) : (
         <>
-          <span className="xp-toast-icon">✦</span>
+          <span className="xp-toast-icon"><Sparkles size={18} /></span>
           <div><strong>+{award.xpEarned} XP</strong></div>
         </>
       )}
@@ -211,7 +237,7 @@ function InlineFileChip({ filename }: { filename: string }) {
   const { label, ext } = humanizeFilename(filename);
   return (
     <span className="inline-doc-chip">
-      <span aria-hidden="true" className="inline-doc-chip-icon">📄</span>
+      <span aria-hidden="true" className="inline-doc-chip-icon"><FileText size={12} /></span>
       {label}
       {ext && <b>{ext}</b>}
     </span>
@@ -284,6 +310,10 @@ export function TopicsPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [editingTopic, setEditingTopic] = useState<Topic | null>(null);
+  const [deletingTopic, setDeletingTopic] = useState<Topic | null>(null);
+  const [topicActionBusy, setTopicActionBusy] = useState(false);
+  const [topicActionError, setTopicActionError] = useState("");
   const handleAuthFailure = useAuthFailure();
 
   const loadTopics = useCallback(async () => {
@@ -326,29 +356,43 @@ export function TopicsPage() {
     }
   }
 
-  async function editTopic(topic: Topic) {
-    const title = window.prompt("Topic title", topic.title)?.trim();
-    if (!title || title === topic.title) return;
+  async function updateTopic(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!editingTopic) return;
+    setTopicActionBusy(true);
+    setTopicActionError("");
+    const data = new FormData(event.currentTarget);
 
     try {
-      const result = await api<{ topic: Topic }>(`/topics/${topic.id}`, {
+      const result = await api<{ topic: Topic }>(`/topics/${editingTopic.id}`, {
         method: "PATCH",
-        body: JSON.stringify({ title }),
+        body: JSON.stringify({
+          title: data.get("title"),
+          description: data.get("description") || null,
+        }),
       });
-      setTopics((current) => current.map((item) => item.id === topic.id ? result.topic : item));
+      setTopics((current) => current.map((item) => item.id === editingTopic.id ? result.topic : item));
+      setEditingTopic(null);
     } catch (requestError) {
-      setError(messageFromError(requestError));
+      setTopicActionError(messageFromError(requestError));
+    } finally {
+      setTopicActionBusy(false);
     }
   }
 
-  async function deleteTopic(topic: Topic) {
-    if (!window.confirm(`Delete “${topic.title}” and all of its notes?`)) return;
+  async function confirmDeleteTopic() {
+    if (!deletingTopic) return;
+    setTopicActionBusy(true);
+    setTopicActionError("");
 
     try {
-      await api<null>(`/topics/${topic.id}`, { method: "DELETE" });
-      setTopics((current) => current.filter((item) => item.id !== topic.id));
+      await api<null>(`/topics/${deletingTopic.id}`, { method: "DELETE" });
+      setTopics((current) => current.filter((item) => item.id !== deletingTopic.id));
+      setDeletingTopic(null);
     } catch (requestError) {
-      setError(messageFromError(requestError));
+      setTopicActionError(messageFromError(requestError));
+    } finally {
+      setTopicActionBusy(false);
     }
   }
 
@@ -360,28 +404,28 @@ export function TopicsPage() {
     <PageShell
       title="My topics"
       subtitle="Everything you are learning, organized in one calm place."
-      action={<button className="button button-primary" onClick={() => setShowModal(true)}>＋ New topic</button>}
+      action={<button className="button button-primary" onClick={() => setShowModal(true)}><Plus size={16} strokeWidth={2.2} /> New topic</button>}
     >
       {error && <p className="page-error" role="alert">{error}</p>}
       <div className="topics-toolbar">
-        <div className="search wide"><span>⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search all topics..." /></div>
+        <div className="search wide"><span><Search size={15} /></span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search all topics..." /></div>
       </div>
       {loading ? <div className="empty">Loading your topics…</div> : (
         <div className="all-topics-grid">
           {visible.map((topic) => (
             <article className="full-topic-card" key={topic.id}>
               <div className="topic-card-top">
-                <span className="topic-icon purple">◇</span>
+                <span className="topic-icon purple"><BookOpen size={18} strokeWidth={1.8} /></span>
                 <div className="card-actions">
-                  <button onClick={() => void editTopic(topic)}>Edit</button>
-                  <button className="danger-link" onClick={() => void deleteTopic(topic)}>Delete</button>
+                  <button onClick={() => { setTopicActionError(""); setEditingTopic(topic); }}>Edit</button>
+                  <button className="danger-link" onClick={() => { setTopicActionError(""); setDeletingTopic(topic); }}>Delete</button>
                 </div>
               </div>
               <span className="topic-category">Study topic</span>
               <h2>{topic.title}</h2>
               <p>{topic.description || "No description yet."}</p>
               <div className="topic-meta"><span>Updated {new Date(topic.updated_at).toLocaleDateString()}</span></div>
-              <Link className="open-topic" href={`/topic?id=${topic.id}`}>Open topic <span>→</span></Link>
+              <Link className="open-topic" href={`/topic?id=${topic.id}`}>Open topic <span><ArrowRight size={13} /></span></Link>
             </article>
           ))}
           {!visible.length && <div className="empty">No topics found.</div>}
@@ -389,14 +433,53 @@ export function TopicsPage() {
       )}
       {showModal && (
         <div className="modal-backdrop" onMouseDown={() => setShowModal(false)}>
-          <form className="topic-modal" onSubmit={createTopic} onMouseDown={(event) => event.stopPropagation()}>
-            <button type="button" className="modal-close" onClick={() => setShowModal(false)}>×</button>
-            <div className="eyebrow"><span>✦</span> NEW LEARNING SPACE</div>
+          <form className="topic-modal action-modal" onSubmit={createTopic} onMouseDown={(event) => event.stopPropagation()}>
+            <button type="button" className="modal-close" onClick={() => setShowModal(false)}><X size={22} /></button>
+            <div className="modal-icon edit-icon"><Sparkles size={22} /></div>
+            <div className="eyebrow">NEW LEARNING SPACE</div>
             <h2>Create a study topic</h2>
             <label>Topic name<input name="title" required maxLength={200} autoFocus /></label>
             <label>Description<textarea name="description" maxLength={1000} rows={4} /></label>
-            <button disabled={saving} className="button button-primary" type="submit">{saving ? "Creating…" : "Create topic"}</button>
+            <div className="modal-actions">
+              <button type="button" className="button button-secondary" onClick={() => setShowModal(false)}>Cancel</button>
+              <button disabled={saving} className="button button-primary" type="submit">{saving ? "Creating…" : "Create topic"}</button>
+            </div>
           </form>
+        </div>
+      )}
+      {editingTopic && (
+        <div className="modal-backdrop" onMouseDown={() => setEditingTopic(null)}>
+          <form role="dialog" aria-modal="true" aria-labelledby="edit-topic-title" className="topic-modal action-modal" onSubmit={updateTopic} onMouseDown={(event) => event.stopPropagation()}>
+            <button type="button" className="modal-close" onClick={() => setEditingTopic(null)}><X size={22} /></button>
+            <div className="modal-icon edit-icon"><Pencil size={22} /></div>
+            <div className="eyebrow">REFINE YOUR TOPIC</div>
+            <h2 id="edit-topic-title">Update topic</h2>
+            {topicActionError && <p className="form-error">{topicActionError}</p>}
+            <label>Topic name<input name="title" required maxLength={200} defaultValue={editingTopic.title} autoFocus /></label>
+            <label>Description<textarea name="description" maxLength={1000} rows={4} defaultValue={editingTopic.description ?? ""} /></label>
+            <div className="modal-actions">
+              <button type="button" className="button button-secondary" onClick={() => setEditingTopic(null)}>Cancel</button>
+              <button disabled={topicActionBusy} className="button button-primary" type="submit">{topicActionBusy ? "Saving…" : "Save changes"}</button>
+            </div>
+          </form>
+        </div>
+      )}
+      {deletingTopic && (
+        <div className="modal-backdrop" onMouseDown={() => (topicActionBusy ? null : setDeletingTopic(null))}>
+          <div role="alertdialog" aria-modal="true" aria-labelledby="delete-topic-title" className="topic-modal action-modal delete-modal" onMouseDown={(event) => event.stopPropagation()}>
+            <button type="button" className="modal-close" disabled={topicActionBusy} onClick={() => setDeletingTopic(null)}><X size={22} /></button>
+            <div className="modal-icon delete-icon"><Trash2 size={22} /></div>
+            <div className="eyebrow">REMOVE THIS TOPIC</div>
+            <h2 id="delete-topic-title">Delete “{deletingTopic.title}”?</h2>
+            <p>This permanently removes the topic and all of its notes, documents, quizzes, and flashcards. This can&apos;t be undone.</p>
+            {topicActionError && <p className="form-error">{topicActionError}</p>}
+            <div className="modal-actions">
+              <button type="button" className="button button-secondary" disabled={topicActionBusy} onClick={() => setDeletingTopic(null)}>Cancel</button>
+              <button type="button" className="button button-danger" disabled={topicActionBusy} onClick={() => void confirmDeleteTopic()}>
+                {topicActionBusy ? "Deleting…" : "Delete topic"}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </PageShell>
@@ -417,6 +500,9 @@ export function TopicDetailPage() {
   const [showNote, setShowNote] = useState(false);
   const [editingNote, setEditingNote] = useState<Note | null>(null);
   const [movingNote, setMovingNote] = useState<Note | null>(null);
+  const [deletingNote, setDeletingNote] = useState<Note | null>(null);
+  const [deletingNoteBusy, setDeletingNoteBusy] = useState(false);
+  const [deleteNoteError, setDeleteNoteError] = useState("");
   const [savingAction, setSavingAction] = useState(false);
   const [error, setError] = useState("");
   const [documents, setDocuments] = useState<StudyDocument[]>([]);
@@ -579,13 +665,18 @@ export function TopicDetailPage() {
     }
   }
 
-  async function deleteNote(note: Note) {
-    if (!window.confirm(`Delete “${note.title}”?`)) return;
+  async function confirmDeleteNote() {
+    if (!deletingNote) return;
+    setDeletingNoteBusy(true);
+    setDeleteNoteError("");
     try {
-      await api<null>(`/notes/${note.id}`, { method: "DELETE" });
+      await api<null>(`/notes/${deletingNote.id}`, { method: "DELETE" });
+      setDeletingNote(null);
       await load();
     } catch (requestError) {
-      setError(messageFromError(requestError));
+      setDeleteNoteError(messageFromError(requestError));
+    } finally {
+      setDeletingNoteBusy(false);
     }
   }
 
@@ -622,26 +713,26 @@ export function TopicDetailPage() {
   }
 
   return (
-    <PageShell title={topic?.title ?? "Topic"} subtitle={topic?.description ?? "Build understanding one clear note at a time."} action={<div className="page-actions"><Link href={`/knowledge-graph?topicId=${topicId}`} className="button button-secondary">◈ Knowledge graph</Link><Link href={`/mind-map?topicId=${topicId}`} className="button button-secondary">✺ Mind map</Link><Link href={`/ai-tutor?topicId=${topicId}`} className="button button-primary">✦ Ask AI tutor</Link><Link href="/topics" className="back-topics">← All topics</Link></div>}>
+    <PageShell title={topic?.title ?? "Topic"} subtitle={topic?.description ?? "Build understanding one clear note at a time."} action={<div className="page-actions"><Link href={`/knowledge-graph?topicId=${topicId}`} className="button button-secondary"><Network size={15} /> Knowledge graph</Link><Link href={`/mind-map?topicId=${topicId}`} className="button button-secondary"><GitBranch size={15} /> Mind map</Link><Link href={`/ai-tutor?topicId=${topicId}`} className="button button-primary"><Sparkles size={15} /> Ask AI tutor</Link><Link href="/topics" className="back-topics"><ArrowLeft size={13} /> All topics</Link></div>}>
       {error && <p className="page-error" role="alert">{error}</p>}
       <section className="notes-panel">
         <div className="section-head">
           <div><h2>Your notes</h2><p>{pagination?.total ?? 0} notes in this topic</p></div>
           <div className="page-actions">
-            <button className="button button-secondary" onClick={() => void exportNotes("md")}>⇩ Export Markdown</button>
-            <button className="button button-secondary" onClick={() => void exportNotes("csv")}>⇩ Export CSV</button>
-            <button className="add-note-button" onClick={() => setShowNote(true)}>＋ Add note</button>
+            <button className="button button-secondary" onClick={() => void exportNotes("md")}><Download size={14} /> Export Markdown</button>
+            <button className="button button-secondary" onClick={() => void exportNotes("csv")}><Download size={14} /> Export CSV</button>
+            <button className="add-note-button" onClick={() => setShowNote(true)}><Plus size={14} strokeWidth={2.2} /> Add note</button>
           </div>
         </div>
-        <div className="search wide notes-search"><span>⌕</span><input value={query} onChange={(event) => { setQuery(event.target.value); setPage(1); }} placeholder="Search notes..." /></div>
+        <div className="search wide notes-search"><span><Search size={15} /></span><input value={query} onChange={(event) => { setQuery(event.target.value); setPage(1); }} placeholder="Search notes..." /></div>
         <div className="notes-list">
           {notes.map((note) => (
             <article key={note.id}>
-              <div><span>▤</span><div><h3>{note.title}</h3><p>{note.content}</p><small>Updated {new Date(note.updated_at).toLocaleDateString()}</small></div></div>
+              <div><span><StickyNote size={16} strokeWidth={1.8} /></span><div><h3>{note.title}</h3><p>{note.content}</p><small>Updated {new Date(note.updated_at).toLocaleDateString()}</small></div></div>
               <div className="note-actions">
-                <button className="note-action edit-action" onClick={() => setEditingNote(note)}><span>✎</span>Edit</button>
-                <button className="note-action move-action" onClick={() => setMovingNote(note)}><span>↗</span>Move</button>
-                <button className="danger-link" onClick={() => void deleteNote(note)}>Delete</button>
+                <button className="note-action edit-action" onClick={() => setEditingNote(note)}><span><Pencil size={13} /></span>Edit</button>
+                <button className="note-action move-action" onClick={() => setMovingNote(note)}><span><FolderInput size={13} /></span>Move</button>
+                <button className="danger-link" onClick={() => { setDeleteNoteError(""); setDeletingNote(note); }}>Delete</button>
               </div>
             </article>
           ))}
@@ -662,7 +753,7 @@ export function TopicDetailPage() {
             <p>{documents.length} uploaded file{documents.length === 1 ? "" : "s"} · used by the AI tutor</p>
           </div>
           <label className={`add-note-button upload-button${uploading ? " disabled" : ""}`}>
-            {uploading ? "Uploading…" : "＋ Upload document"}
+            {uploading ? "Uploading…" : <><Plus size={14} strokeWidth={2.2} /> Upload document</>}
             <input
               type="file"
               accept=".txt,.pdf,text/plain,application/pdf"
@@ -677,7 +768,7 @@ export function TopicDetailPage() {
           {documents.map((document) => (
             <article key={document.id}>
               <div>
-                <span>📄</span>
+                <span><FileText size={16} strokeWidth={1.8} /></span>
                 <div>
                   <h3>{humanizeFilename(document.title).label} <span className="doc-type-badge">{documentTypeBadge(document.content_type)}</span></h3>
                   <p>{document.original_filename}</p>
@@ -753,21 +844,25 @@ export function TopicDetailPage() {
       )}
       {showNote && (
         <div className="modal-backdrop" onMouseDown={() => setShowNote(false)}>
-          <form role="dialog" aria-modal="true" aria-labelledby="add-note-title" className="topic-modal note-modal" onSubmit={addNote} onMouseDown={(event) => event.stopPropagation()}>
-            <button type="button" className="modal-close" onClick={() => setShowNote(false)}>×</button>
-            <div className="eyebrow"><span>✦</span> CAPTURE AN IDEA</div>
+          <form role="dialog" aria-modal="true" aria-labelledby="add-note-title" className="topic-modal note-modal action-modal" onSubmit={addNote} onMouseDown={(event) => event.stopPropagation()}>
+            <button type="button" className="modal-close" onClick={() => setShowNote(false)}><X size={22} /></button>
+            <div className="modal-icon edit-icon"><Sparkles size={22} /></div>
+            <div className="eyebrow">CAPTURE AN IDEA</div>
             <h2 id="add-note-title">Add a new note</h2>
             <label>Note title<input name="title" required maxLength={200} autoFocus /></label>
             <label>Note content<textarea name="content" required rows={6} /></label>
-            <button className="button button-primary" type="submit">Save note</button>
+            <div className="modal-actions">
+              <button type="button" className="button button-secondary" onClick={() => setShowNote(false)}>Cancel</button>
+              <button className="button button-primary" type="submit">Save note</button>
+            </div>
           </form>
         </div>
       )}
       {editingNote && (
         <div className="modal-backdrop" onMouseDown={() => setEditingNote(null)}>
           <form role="dialog" aria-modal="true" aria-labelledby="edit-note-title" className="topic-modal note-modal action-modal" onSubmit={updateNote} onMouseDown={(event) => event.stopPropagation()}>
-            <button type="button" className="modal-close" onClick={() => setEditingNote(null)}>×</button>
-            <div className="modal-icon edit-icon">✎</div>
+            <button type="button" className="modal-close" onClick={() => setEditingNote(null)}><X size={22} /></button>
+            <div className="modal-icon edit-icon"><Pencil size={22} /></div>
             <div className="eyebrow">REFINE YOUR NOTE</div>
             <h2 id="edit-note-title">Update note</h2>
             <p>Keep the idea clear, concise, and useful for your next review.</p>
@@ -783,8 +878,8 @@ export function TopicDetailPage() {
       {movingNote && (
         <div className="modal-backdrop" onMouseDown={() => setMovingNote(null)}>
           <form role="dialog" aria-modal="true" aria-labelledby="move-note-title" className="topic-modal action-modal move-modal" onSubmit={moveNote} onMouseDown={(event) => event.stopPropagation()}>
-            <button type="button" className="modal-close" onClick={() => setMovingNote(null)}>×</button>
-            <div className="modal-icon move-icon">↗</div>
+            <button type="button" className="modal-close" onClick={() => setMovingNote(null)}><X size={22} /></button>
+            <div className="modal-icon move-icon"><FolderInput size={22} /></div>
             <div className="eyebrow">REORGANIZE YOUR LEARNING</div>
             <h2 id="move-note-title">Move “{movingNote.title}”</h2>
             <p>Choose another topic. The note content and update history will stay intact.</p>
@@ -806,11 +901,29 @@ export function TopicDetailPage() {
           </form>
         </div>
       )}
+      {deletingNote && (
+        <div className="modal-backdrop" onMouseDown={() => (deletingNoteBusy ? null : setDeletingNote(null))}>
+          <div role="alertdialog" aria-modal="true" aria-labelledby="delete-note-title" className="topic-modal action-modal delete-modal" onMouseDown={(event) => event.stopPropagation()}>
+            <button type="button" className="modal-close" disabled={deletingNoteBusy} onClick={() => setDeletingNote(null)}><X size={22} /></button>
+            <div className="modal-icon delete-icon"><Trash2 size={22} /></div>
+            <div className="eyebrow">REMOVE THIS NOTE</div>
+            <h2 id="delete-note-title">Delete “{deletingNote.title}”?</h2>
+            <p>This note and its content will be permanently removed. This can&apos;t be undone.</p>
+            {deleteNoteError && <p className="form-error">{deleteNoteError}</p>}
+            <div className="modal-actions">
+              <button type="button" className="button button-secondary" disabled={deletingNoteBusy} onClick={() => setDeletingNote(null)}>Cancel</button>
+              <button type="button" className="button button-danger" disabled={deletingNoteBusy} onClick={() => void confirmDeleteNote()}>
+                {deletingNoteBusy ? "Deleting…" : "Delete note"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {deletingDocument && (
         <div className="modal-backdrop" onMouseDown={() => (deletingDocumentBusy ? null : setDeletingDocument(null))}>
           <div role="alertdialog" aria-modal="true" aria-labelledby="delete-document-title" className="topic-modal action-modal delete-modal" onMouseDown={(event) => event.stopPropagation()}>
-            <button type="button" className="modal-close" disabled={deletingDocumentBusy} onClick={() => setDeletingDocument(null)}>×</button>
-            <div className="modal-icon delete-icon">🗑</div>
+            <button type="button" className="modal-close" disabled={deletingDocumentBusy} onClick={() => setDeletingDocument(null)}><X size={22} /></button>
+            <div className="modal-icon delete-icon"><Trash2 size={22} /></div>
             <div className="eyebrow">REMOVE FROM KNOWLEDGE BASE</div>
             <h2 id="delete-document-title">Delete “{humanizeFilename(deletingDocument.title).label}”?</h2>
             <p>
@@ -892,13 +1005,13 @@ export function HistoryPage() {
     {},
   );
 
-  const icons: Record<StudyActivity["activity_type"], string> = {
-    topic_created: "◇",
-    topic_updated: "✎",
-    note_created: "▤",
-    note_updated: "✓",
-    note_moved: "↗",
-    ai_chat: "✦",
+  const icons: Partial<Record<StudyActivity["activity_type"], typeof BookOpen>> = {
+    topic_created: BookOpen,
+    topic_updated: Pencil,
+    note_created: StickyNote,
+    note_updated: Check,
+    note_moved: FolderInput,
+    ai_chat: Sparkles,
   };
 
   async function downloadProgressReport() {
@@ -913,7 +1026,7 @@ export function HistoryPage() {
     <PageShell
       title="Study history"
       subtitle="A real record of your learning activity."
-      action={<button className="button button-primary" onClick={() => void downloadProgressReport()}>⇩ Download progress report</button>}
+      action={<button className="button button-primary" onClick={() => void downloadProgressReport()}><Download size={15} /> Download progress report</button>}
     >
       {error && <p className="page-error" role="alert">{error}</p>}
       <div className="history-stats">
@@ -944,10 +1057,12 @@ export function HistoryPage() {
             {Object.entries(groupedActivities).map(([day, dayActivities]) => (
               <div className="history-day" key={day}>
                 <h2>{day}</h2>
-                {dayActivities.map((activity) => (
+                {dayActivities.map((activity) => {
+                  const ActivityIcon = icons[activity.activity_type] ?? BookOpen;
+                  return (
                   <article key={activity.id}>
                     <span className={`history-icon ${activity.activity_type === "ai_chat" ? "history-ai-icon" : ""}`}>
-                      {icons[activity.activity_type]}
+                      <ActivityIcon size={16} strokeWidth={1.8} />
                     </span>
                     <div>
                       <h3>{activity.topic_title || "Deleted topic"}</h3>
@@ -955,7 +1070,8 @@ export function HistoryPage() {
                     </div>
                     <b>{new Date(activity.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</b>
                   </article>
-                ))}
+                  );
+                })}
               </div>
             ))}
             {!activities.length && <div className="empty">Your activity will appear here as you study.</div>}
@@ -991,6 +1107,7 @@ export function TutorPage() {
   const [loadingMessages, setLoadingMessages] = useState(false);
   const [sending, setSending] = useState(false);
   const [clearing, setClearing] = useState(false);
+  const [confirmingClear, setConfirmingClear] = useState(false);
   const [error, setError] = useState("");
   const [knowledgeDocuments, setKnowledgeDocuments] = useState<StudyDocument[]>([]);
   const [knowledgeNotesTotal, setKnowledgeNotesTotal] = useState<number | null>(null);
@@ -1141,7 +1258,7 @@ export function TutorPage() {
 
   async function clearHistory() {
     if (!topicId || clearing || !messages.length) return;
-    if (!window.confirm("Clear this topic's AI conversation?")) return;
+    setConfirmingClear(false);
 
     setClearing(true);
     setError("");
@@ -1362,7 +1479,7 @@ export function TutorPage() {
         <div className="tutor-layout">
           <section className={`chat-panel${sparMode ? " sparring-skin" : ""}${agentMode ? " agent-skin" : ""}`}>
             <div className="chat-heading">
-              <span className="ai-spark">{sparMode ? "⚔" : agentMode ? "🤖" : "✦"}</span>
+              <span className="ai-spark">{sparMode ? <Swords size={17} /> : agentMode ? <Bot size={17} /> : <Sparkles size={17} />}</span>
               <div>
                 <h2>{sparMode ? "Sparring Mode" : agentMode ? "Study Agents" : "Studia Tutor"}</h2>
                 <p><i /> {sparMode ? (sparConcept ? `Defending: ${sparConcept}` : "Pick a concept to spar about") : agentMode ? "Ask for anything -- a quiz, an exam, flashcards, a study plan, or a question" : `Focused on ${selectedTopic?.title}`}</p>
@@ -1373,9 +1490,9 @@ export function TutorPage() {
                 <button type="button" onClick={endAgentMode}>Back to tutor</button>
               ) : (
                 <div className="chat-heading-actions">
-                  <button type="button" className="spar-toggle" onClick={() => { setSparMode(true); setAgentMode(false); }}>⚔ Spar with me</button>
-                  <button type="button" className="agent-toggle" onClick={toggleAgentMode}>🤖 Ask my agents</button>
-                  <button type="button" disabled={clearing || !messages.length} onClick={() => void clearHistory()}>
+                  <button type="button" className="spar-toggle" onClick={() => { setSparMode(true); setAgentMode(false); }}><Swords size={13} /> Spar with me</button>
+                  <button type="button" className="agent-toggle" onClick={toggleAgentMode}><Bot size={13} /> Ask my agents</button>
+                  <button type="button" disabled={clearing || !messages.length} onClick={() => setConfirmingClear(true)}>
                     {clearing ? "Clearing…" : "Clear chat"}
                   </button>
                 </div>
@@ -1391,26 +1508,26 @@ export function TutorPage() {
                   )}
                   {sparMessages.map((message) => (
                     <div className={`chat-message ${message.role} sparring`} key={message.id}>
-                      {message.role === "assistant" && <span>⚔</span>}
+                      {message.role === "assistant" && <span><Swords size={15} /></span>}
                       <div className="chat-message-body">
                         {message.role === "assistant"
                           ? <AiMessageContent text={message.message} />
                           : <p>{message.message}</p>}
                         {message.role === "assistant" && message.usedMemory && (
-                          <span className="memory-used-badge" title="Shaped by what Studia remembers about you">🧠 remembered</span>
+                          <span className="memory-used-badge" title="Shaped by what Studia remembers about you"><Brain size={11} /> remembered</span>
                         )}
                       </div>
                     </div>
                   ))}
-                  {(sending || sparStarting) && <div className="chat-message assistant sparring"><span>⚔</span><p>Thinking…</p></div>}
+                  {(sending || sparStarting) && <div className="chat-message assistant sparring"><span><Swords size={15} /></span><p>Thinking…</p></div>}
                   {sparVerdict === "concede" && (
                     <div className="spar-verdict-card">
-                      <span className="spar-verdict-icon">🏆</span>
+                      <span className="spar-verdict-icon"><Trophy size={20} /></span>
                       <div>
                         <strong>You won this round.</strong>
                         <p>Your correction held up -- that&apos;s a stronger signal than just reading the answer.</p>
                       </div>
-                      <button type="button" className="button button-primary" onClick={newSpar}>Spar again →</button>
+                      <button type="button" className="button button-primary" onClick={newSpar}>Spar again <ArrowRight size={13} /></button>
                     </div>
                   )}
                 </div>
@@ -1426,7 +1543,7 @@ export function TutorPage() {
                         disabled={sparStarting}
                       />
                       <button disabled={sparStarting || !sparConceptInput.trim()} type="submit">
-                        {sparStarting ? "Starting…" : "Start spar →"}
+                        {sparStarting ? "Starting…" : <>Start spar <ArrowRight size={13} /></>}
                       </button>
                     </form>
                   ) : sparVerdict !== "concede" && (
@@ -1439,7 +1556,7 @@ export function TutorPage() {
                         maxLength={2000}
                         disabled={sending}
                       />
-                      <button disabled={sending || !input.trim()} type="submit">{sending ? "Sending…" : "Rebut →"}</button>
+                      <button disabled={sending || !input.trim()} type="submit">{sending ? "Sending…" : <>Rebut <ArrowRight size={13} /></>}</button>
                     </form>
                   )}
                 </div>
@@ -1454,14 +1571,14 @@ export function TutorPage() {
                   )}
                   {agentMessages.map((message) => (
                     <div className={`chat-message ${message.role} agent`} key={message.id}>
-                      {message.role === "assistant" && <span>🤖</span>}
+                      {message.role === "assistant" && <span><Bot size={15} /></span>}
                       <div className="chat-message-body">
                         {message.role === "assistant" ? <AiMessageContent text={message.message} /> : <p>{message.message}</p>}
                         {message.role === "assistant" && message.sessionId != null && (
                           <div className="agent-trace-toggle-row">
                             {message.agentLabel && <span className="agent-label-badge">{message.agentLabel}</span>}
                             <button type="button" className="agent-trace-toggle" onClick={() => void toggleTrace(message.sessionId!)}>
-                              {expandedTraceFor === message.sessionId ? "Hide agent trace ▴" : "How I did this ▾"}
+                              {expandedTraceFor === message.sessionId ? <>Hide agent trace <ChevronUp size={12} /></> : <>How I did this <ChevronDown size={12} /></>}
                             </button>
                           </div>
                         )}
@@ -1482,7 +1599,7 @@ export function TutorPage() {
                       </div>
                     </div>
                   ))}
-                  {agentSending && <div className="chat-message assistant agent"><span>🤖</span><p>Routing to the right agent…</p></div>}
+                  {agentSending && <div className="chat-message assistant agent"><span><Bot size={15} /></span><p>Routing to the right agent…</p></div>}
                 </div>
                 <div className="chat-input-wrap">
                   <form className="chat-input" onSubmit={sendAgentMessage}>
@@ -1494,7 +1611,7 @@ export function TutorPage() {
                       maxLength={2000}
                       disabled={agentSending}
                     />
-                    <button disabled={agentSending || !input.trim()} type="submit">{agentSending ? "Sending…" : "Send →"}</button>
+                    <button disabled={agentSending || !input.trim()} type="submit">{agentSending ? "Sending…" : <>Send <ArrowRight size={13} /></>}</button>
                   </form>
                 </div>
               </>
@@ -1506,7 +1623,7 @@ export function TutorPage() {
                       {!messages.length && <div className="chat-welcome">Ask a question, request a summary, or create a practice quiz.</div>}
                       {messages.map((message) => (
                         <div className={`chat-message ${message.role}`} key={message.id}>
-                          {message.role === "assistant" && <span>✦</span>}
+                          {message.role === "assistant" && <span><Sparkles size={15} /></span>}
                           <div className="chat-message-body">
                             {message.role === "assistant"
                               ? <AiMessageContent text={message.message} />
@@ -1520,7 +1637,7 @@ export function TutorPage() {
                                     key={`${source.sourceType}-${source.sourceId}-${index}`}
                                     title={source.excerpt}
                                   >
-                                    {source.sourceType === "note" ? "▤" : "📄"}{" "}
+                                    {source.sourceType === "note" ? <StickyNote size={11} /> : <FileText size={11} />}{" "}
                                     {source.sourceType === "document"
                                       ? humanizeFilename(source.sourceTitle).label
                                       : source.sourceTitle}
@@ -1529,12 +1646,12 @@ export function TutorPage() {
                               </div>
                             )}
                             {message.role === "assistant" && message.usedMemory && (
-                              <span className="memory-used-badge" title="Shaped by what Studia remembers about you">🧠 remembered</span>
+                              <span className="memory-used-badge" title="Shaped by what Studia remembers about you"><Brain size={11} /> remembered</span>
                             )}
                           </div>
                         </div>
                       ))}
-                      {sending && <div className="chat-message assistant"><span>✦</span><p>Thinking…</p></div>}
+                      {sending && <div className="chat-message assistant"><span><Sparkles size={15} /></span><p>Thinking…</p></div>}
                     </>
                   )}
                 </div>
@@ -1547,8 +1664,8 @@ export function TutorPage() {
                   {scopedDocument && !showDocumentPicker && (
                     <div className="scoped-doc-row">
                       <span className="scoped-doc-chip">
-                        📄 Asking about {humanizeFilename(scopedDocument.title).label}
-                        <button type="button" aria-label="Stop focusing on this document" onClick={() => setSelectedDocumentId(null)}>×</button>
+                        <FileText size={13} /> Asking about {humanizeFilename(scopedDocument.title).label}
+                        <button type="button" aria-label="Stop focusing on this document" onClick={() => setSelectedDocumentId(null)}><X size={14} /></button>
                       </span>
                     </div>
                   )}
@@ -1557,7 +1674,7 @@ export function TutorPage() {
                       <div className="slash-doc-picker-label">Ask about a specific document</div>
                       {filteredDocuments.length ? filteredDocuments.map((document) => (
                         <button type="button" className="slash-doc-option" key={document.id} onClick={() => selectDocumentForQuestion(document)}>
-                          <span aria-hidden="true">📄</span>
+                          <span aria-hidden="true"><FileText size={14} /></span>
                           <span className="slash-doc-option-title">{humanizeFilename(document.title).label}</span>
                           <em className="doc-type-badge">{documentTypeBadge(document.content_type)}</em>
                         </button>
@@ -1578,7 +1695,7 @@ export function TutorPage() {
                       maxLength={2000}
                       disabled={sending || !topicId}
                     />
-                    <button disabled={sending || showDocumentPicker || !input.trim()} type="submit">{sending ? "Sending…" : "Send →"}</button>
+                    <button disabled={sending || showDocumentPicker || !input.trim()} type="submit">{sending ? "Sending…" : <>Send <ArrowRight size={13} /></>}</button>
                   </form>
                 </div>
               </>
@@ -1586,7 +1703,7 @@ export function TutorPage() {
           </section>
           <aside className="tutor-context">
             <div className="section-kicker">CURRENT CONTEXT</div>
-            <span className="topic-icon purple">◇</span>
+            <span className="topic-icon purple"><BookOpen size={20} strokeWidth={1.8} /></span>
             <h3>{selectedTopic?.title}</h3>
             <p>{selectedTopic?.description || "Your notes provide the context for AI answers."}</p>
             <label className="tutor-topic-select">
@@ -1604,14 +1721,14 @@ export function TutorPage() {
             </label>
             <div className="context-list knowledge-base">
               <div className="kb-row">
-                <span className="kb-icon notes">▤</span>
+                <span className="kb-icon notes"><StickyNote size={16} strokeWidth={1.8} /></span>
                 <div>
                   <b>{knowledgeNotesTotal ?? 0} note{knowledgeNotesTotal === 1 ? "" : "s"}</b>
                   <small>Saved notes the tutor can reference</small>
                 </div>
               </div>
               <div className="kb-row">
-                <span className="kb-icon docs">📄</span>
+                <span className="kb-icon docs"><FileText size={16} strokeWidth={1.8} /></span>
                 <div>
                   <b>{knowledgeDocuments.length} document{knowledgeDocuments.length === 1 ? "" : "s"}</b>
                   <small>Uploaded files indexed for this topic</small>
@@ -1629,7 +1746,7 @@ export function TutorPage() {
                     title={document.status === "completed" ? "Focus the tutor on this document" : "Not ready yet"}
                     onClick={() => setSelectedDocumentId((current) => (current === document.id ? null : document.id))}
                   >
-                    <span aria-hidden="true">📄</span>
+                    <span aria-hidden="true"><FileText size={14} /></span>
                     <div>
                       <b title={document.title}>{humanizeFilename(document.title).label}</b>
                       <span className={`document-status ${document.status}`}>
@@ -1649,6 +1766,21 @@ export function TutorPage() {
             )}
             <Link className="context-topic-link" href={`/topic?id=${topicId}`}>Manage notes &amp; documents</Link>
           </aside>
+        </div>
+      )}
+      {confirmingClear && (
+        <div className="modal-backdrop" onMouseDown={() => setConfirmingClear(false)}>
+          <div role="alertdialog" aria-modal="true" aria-labelledby="clear-chat-title" className="topic-modal action-modal delete-modal" onMouseDown={(event) => event.stopPropagation()}>
+            <button type="button" className="modal-close" onClick={() => setConfirmingClear(false)}><X size={22} /></button>
+            <div className="modal-icon delete-icon"><Trash2 size={22} /></div>
+            <div className="eyebrow">CLEAR CONVERSATION</div>
+            <h2 id="clear-chat-title">Clear this conversation?</h2>
+            <p>This removes every message in this topic&apos;s AI tutor chat. This can&apos;t be undone.</p>
+            <div className="modal-actions">
+              <button type="button" className="button button-secondary" onClick={() => setConfirmingClear(false)}>Cancel</button>
+              <button type="button" className="button button-danger" onClick={() => void clearHistory()}>Clear chat</button>
+            </div>
+          </div>
         </div>
       )}
     </PageShell>
@@ -1682,7 +1814,7 @@ const LEARNING_STYLE_AXES: { key: keyof LearningStyleWeights; label: string }[] 
   { key: "conversation", label: "Conversation" },
 ];
 
-const RADAR_SIZE = 240;
+const RADAR_SIZE = 320;
 const RADAR_CENTER = RADAR_SIZE / 2;
 const RADAR_RADIUS = 92;
 
@@ -1868,6 +2000,7 @@ function LearningStylePanel() {
 
 export function SettingsPage() {
   const handleAuthFailure = useAuthFailure();
+  const { theme, toggleTheme } = useTheme();
   const [user, setUser] = useState<User | null>(null);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState("");
@@ -1954,7 +2087,7 @@ export function SettingsPage() {
 
   return (
     <PageShell title="Settings" subtitle="Manage your profile information.">
-      {saved && <div className="save-toast">✓ Your profile has been saved.</div>}
+      {saved && <div className="save-toast"><Check size={14} strokeWidth={2.5} /> Your profile has been saved.</div>}
       {error && <p className="page-error" role="alert">{error}</p>}
       <section className="settings-panel">
         <div className="settings-section">
@@ -1966,6 +2099,18 @@ export function SettingsPage() {
               <div className="settings-actions full"><button className="button button-primary" type="submit">Save changes</button></div>
             </form>
           ) : <div className="empty">Loading your profile…</div>}
+        </div>
+        <div className="settings-section">
+          <div className="toggle-row">
+            <span><b>Dark mode</b><small>Switch the whole app between light and dark themes.</small></span>
+            <input
+              type="checkbox"
+              role="switch"
+              checked={theme === "dark"}
+              onChange={toggleTheme}
+              aria-label="Toggle dark mode"
+            />
+          </div>
         </div>
       </section>
       <LearningStylePanel />

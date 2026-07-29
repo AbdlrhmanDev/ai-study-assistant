@@ -30,6 +30,7 @@ from app.modules.quizzes.model import Quiz  # noqa: F401
 from app.modules.study_history.model import StudyActivity  # noqa: F401
 from app.modules.topics.model import Topic  # noqa: F401
 from app.modules.users.model import User  # noqa: F401
+from app.modules.workspace.model import WorkspacePage  # noqa: F401
 
 config = context.config
 config.set_main_option("sqlalchemy.url", get_settings().sqlalchemy_database_url)

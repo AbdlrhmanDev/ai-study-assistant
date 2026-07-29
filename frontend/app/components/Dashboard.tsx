@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FormEvent, useCallback, useEffect, useState } from "react";
+import { ArrowRight, BookOpen, Check, Flame, Plus, Search, Sparkles, X } from "lucide-react";
 import AppSidebar from "./AppSidebar";
 import { PlanTask, StudyPlan } from "./CoachPages";
 import { DashboardFlashcardStats, formatRelativeDue } from "./FlashcardPages";
@@ -98,31 +99,31 @@ export default function Dashboard() {
       <AppSidebar />
       <section className="dashboard-main">
         <header className="dash-top">
-          <div className="search"><span>⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search your topics..." /></div>
+          <div className="search"><span><Search size={16} strokeWidth={1.8} /></span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search your topics..." /></div>
           <div className="dash-tools"><span className="avatar">{initials}</span></div>
         </header>
         <div className="dash-content">
           {error && <p className="page-error" role="alert">{error}</p>}
           <div className="welcome">
-            <div><div className="section-kicker">YOUR STUDY SPACE</div><h1>Welcome, {user?.name ?? "learner"} <span>✦</span></h1><p>Pick up where you left off or start a new topic.</p></div>
-            <button className="button button-primary" onClick={() => setShowModal(true)}>＋ New topic</button>
+            <div><div className="section-kicker">YOUR STUDY SPACE</div><h1>Welcome, {user?.name ?? "learner"} <span><Sparkles size={20} /></span></h1><p>Pick up where you left off or start a new topic.</p></div>
+            <button className="button button-primary" onClick={() => setShowModal(true)}><Plus size={16} strokeWidth={2.2} /> New topic</button>
           </div>
           <div className="stats">
-            <article><span className="stat-icon violet">▤</span><div><small>STUDY TOPICS</small><strong>{topics.length}</strong></div></article>
-            <article><span className="stat-icon coral">✦</span><div><small>ACCOUNT</small><strong className="stat-label">{user?.email ?? "Loading…"}</strong></div></article>
+            <article><span className="stat-icon violet"><BookOpen size={20} strokeWidth={1.8} /></span><div><small>STUDY TOPICS</small><strong>{topics.length}</strong></div></article>
+            <article><span className="stat-icon coral"><Sparkles size={20} strokeWidth={1.8} /></span><div><small>ACCOUNT</small><strong className="stat-label">{user?.email ?? "Loading…"}</strong></div></article>
             {!!streak?.currentStreak && (
-              <article><span className="stat-icon fire">🔥</span><div><small>STREAK</small><strong>{streak.currentStreak} day{streak.currentStreak === 1 ? "" : "s"}</strong></div></article>
+              <article><span className="stat-icon fire"><Flame size={20} strokeWidth={1.8} /></span><div><small>STREAK</small><strong>{streak.currentStreak} day{streak.currentStreak === 1 ? "" : "s"}</strong></div></article>
             )}
           </div>
           <div className="dashboard-grid">
             <section className="topics-section">
-              <div className="section-head"><div><h2>Your study topics</h2><p>Live from your Studia account</p></div><Link href="/topics">View all →</Link></div>
+              <div className="section-head"><div><h2>Your study topics</h2><p>Live from your Studia account</p></div><Link href="/topics">View all <ArrowRight size={13} /></Link></div>
               <div className="topic-list">
                 {visibleTopics.slice(0, 6).map((topic) => (
                   <Link className="topic-row" href={`/topic?id=${topic.id}`} key={topic.id}>
-                    <span className="topic-icon purple">◇</span>
+                    <span className="topic-icon purple"><BookOpen size={18} strokeWidth={1.8} /></span>
                     <div className="topic-info"><h3>{topic.title}</h3><p>{topic.description || "No description yet."}</p><small>Updated {new Date(topic.updated_at).toLocaleDateString()}</small></div>
-                    <span>→</span>
+                    <span><ArrowRight size={15} /></span>
                   </Link>
                 ))}
                 {!visibleTopics.length && <div className="empty">No topics found.</div>}
@@ -132,7 +133,7 @@ export default function Dashboard() {
               <section className="weekly-card coach-widget">
                 <div className="section-head">
                   <div><h3>Today&apos;s plan</h3><p>{plan?.narrative ?? "Your study coach"}</p></div>
-                  <Link href="/coach">Open →</Link>
+                  <Link href="/coach">Open <ArrowRight size={13} /></Link>
                 </div>
                 {plan?.tasks.length ? (
                   <ul className="coach-widget-list">
@@ -145,7 +146,7 @@ export default function Dashboard() {
                           onClick={() => void toggleTask(task)}
                           aria-label={task.status === "completed" ? "Mark as not done" : "Mark as done"}
                         >
-                          {task.status === "completed" ? "✓" : ""}
+                          {task.status === "completed" ? <Check size={13} strokeWidth={3} /> : ""}
                         </button>
                         <span>{task.title}</span>
                         <small>{task.estimatedMinutes} min</small>
@@ -160,7 +161,7 @@ export default function Dashboard() {
               <section className="weekly-card flashcard-widget">
                 <div className="section-head">
                   <div><h3>Flashcards</h3><p>Spaced-repetition review</p></div>
-                  <Link href="/flashcards">Open →</Link>
+                  <Link href="/flashcards">Open <ArrowRight size={13} /></Link>
                 </div>
                 {flashcardStats ? (
                   <ul className="flashcard-widget-list">
@@ -185,13 +186,17 @@ export default function Dashboard() {
       </section>
       {showModal && (
         <div className="modal-backdrop" onMouseDown={() => setShowModal(false)}>
-          <form className="topic-modal" onSubmit={createTopic} onMouseDown={(event) => event.stopPropagation()}>
-            <button type="button" className="modal-close" onClick={() => setShowModal(false)}>×</button>
-            <div className="eyebrow"><span>✦</span> NEW LEARNING SPACE</div>
+          <form className="topic-modal action-modal" onSubmit={createTopic} onMouseDown={(event) => event.stopPropagation()}>
+            <button type="button" className="modal-close" onClick={() => setShowModal(false)}><X size={22} /></button>
+            <div className="modal-icon edit-icon"><Sparkles size={22} /></div>
+            <div className="eyebrow">NEW LEARNING SPACE</div>
             <h2>Create a study topic</h2>
             <label>Topic name<input name="title" required maxLength={200} autoFocus /></label>
             <label>Description<textarea name="description" maxLength={1000} rows={4} /></label>
-            <button className="button button-primary" type="submit">Create topic</button>
+            <div className="modal-actions">
+              <button type="button" className="button button-secondary" onClick={() => setShowModal(false)}>Cancel</button>
+              <button className="button button-primary" type="submit">Create topic</button>
+            </div>
           </form>
         </div>
       )}

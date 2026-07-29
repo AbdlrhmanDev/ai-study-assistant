@@ -2,6 +2,7 @@
 
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { RefreshCw, Sparkles } from "lucide-react";
 import { PageShell, useAuthFailure } from "./BackendPages";
 import { api, Topic, messageFromError } from "../lib/api";
 
@@ -178,7 +179,7 @@ export function MindMapPage() {
       subtitle="A visual outline of this topic, generated from your notes and documents."
       action={
         <button className="button button-secondary" disabled={rebuilding} onClick={() => void rebuild()}>
-          {rebuilding ? "Generating…" : mindMap?.structure ? "↻ Regenerate" : "✦ Generate mind map"}
+          {rebuilding ? "Generating…" : mindMap?.structure ? <><RefreshCw size={14} /> Regenerate</> : <><Sparkles size={14} /> Generate mind map</>}
         </button>
       }
     >
