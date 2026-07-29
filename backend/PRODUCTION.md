@@ -34,7 +34,8 @@ stdout/stderr to the hosting platform's logs (JSON in production, with
 password/cookie/authorization fields redacted). Every response includes
 `X-Request-Id`.
 
-Run `alembic upgrade head` before a new release. Enable automated PostgreSQL
+Run `alembic upgrade head` before a new release (the provided `Dockerfile`
+does this automatically on container start). Enable automated PostgreSQL
 backups and test restore procedures.
 
 Sessions are stored server-side in the `user_sessions` table; there's nothing
@@ -50,12 +51,13 @@ running more than one instance or a platform with ephemeral filesystems.
 
 ## Deployment
 
-Install `requirements.txt`, apply migrations, and run the application with an
-ASGI process manager:
+Build and run the provided `Dockerfile` (it reads `PORT` at runtime, falling
+back to 5000 locally -- required by platforms like Railway/Heroku that
+assign the port dynamically), or run directly with an ASGI process manager:
 
 ```bash
 alembic upgrade head
-uvicorn app.main:app --host 0.0.0.0 --port 5000 --workers 2
+uvicorn app.main:app --host 0.0.0.0 --port "${PORT:-5000}" --workers 2
 ```
 
 Use a rolling or blue/green deployment. FastAPI's lifespan disposes the
