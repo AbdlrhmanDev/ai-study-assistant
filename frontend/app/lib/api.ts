@@ -1,5 +1,8 @@
-const API_URL =
-  process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5000/api/v1";
+// Relative on purpose: the browser calls this app's own origin, and
+// next.config.ts's rewrite forwards /api/v1/* to the real backend
+// server-side. That keeps the session cookie first-party -- see
+// next.config.ts for why that matters on mobile.
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "/api/v1";
 
 export type User = { id: string; name: string; email: string; profileImageUrl: string | null };
 export type Topic = {
@@ -48,7 +51,6 @@ type StoredCache = Record<string, { value: unknown; expiresAt: number }>;
 function canPersist(path: string): boolean {
   return path === "/auth/me"
     || path === "/topics"
-    || path === "/dashboard"
     || path === "/workspace-pages"
     || path === "/flashcards/stats-summary"
     || path.includes("counts-by-topic")
@@ -183,8 +185,11 @@ export function messageFromError(error: unknown) {
 export function apiAssetUrl(path: string | null | undefined): string | null {
   if (!path) return null;
   if (/^https?:\/\//i.test(path)) return path;
-  const api = new URL(API_URL);
-  return new URL(path, `${api.origin}/`).toString();
+  // API_URL may be relative (the normal case now -- see its declaration
+  // above), so resolve against the current page instead of assuming API_URL
+  // itself is an absolute URL with its own origin.
+  if (typeof window === "undefined") return path;
+  return new URL(path, window.location.origin).toString();
 }
 
 // Attach to expensive generate-once actions (quiz/exam/flashcard
