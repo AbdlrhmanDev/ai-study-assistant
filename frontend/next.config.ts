@@ -10,6 +10,13 @@ import type { NextConfig } from "next";
 // Chrome) blocks or expires third-party cookies, causing an immediate
 // logout right after a successful login. Proxying removes the cross-site
 // hop entirely instead of trying to work around browser cookie policy.
+//
+// IMPORTANT: rewrites() is resolved once at build time -- vinext/Next.js
+// embeds the returned destination as a literal string in the compiled
+// server bundle, it is NOT re-read from process.env when the container
+// starts. So BACKEND_INTERNAL_URL must be passed as a Docker build ARG
+// (see Dockerfile), the same as NEXT_PUBLIC_API_URL. Setting it as a
+// Railway *runtime* variable alone has no effect without a fresh build.
 const BACKEND_INTERNAL_URL = process.env.BACKEND_INTERNAL_URL ?? "http://localhost:5000";
 
 const nextConfig: NextConfig = {

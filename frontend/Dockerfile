@@ -22,6 +22,15 @@ ENV NODE_ENV=production
 ARG NEXT_PUBLIC_API_URL
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 
+# next.config.ts's rewrites() is resolved once at build time and the
+# result is embedded as a literal value in the compiled server bundle --
+# it is NOT re-read from the environment at container start. So this also
+# has to be a build arg, the same as NEXT_PUBLIC_API_URL above, or the
+# proxy destination silently falls back to the http://localhost:5000
+# default and every API call gets ECONNREFUSED in production.
+ARG BACKEND_INTERNAL_URL
+ENV BACKEND_INTERNAL_URL=$BACKEND_INTERNAL_URL
+
 RUN npm run build
 
 RUN useradd --create-home --shell /bin/bash appuser \
