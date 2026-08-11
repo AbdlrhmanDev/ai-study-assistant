@@ -1,5 +1,3 @@
-from fastapi import BackgroundTasks
-
 from ...db.session import get_sessionmaker
 from . import service
 
@@ -12,7 +10,12 @@ async def _extract_memory(user_id: int, question: str, answer: str) -> None:
         await service.extract_and_store(db, user_id=user_id, question=question, answer=answer)
 
 
-def extract_memory_in_background(
-    background_tasks: BackgroundTasks, user_id: int, question: str, answer: str
-) -> None:
-    background_tasks.add_task(_extract_memory, user_id, question, answer)
+async def enqueue_memory_extraction(user_id: int, question: str, answer: str) -> str:
+    from ...core.jobs import enqueue
+    from ...core.config import get_settings
+    if not get_settings().redis_url:
+        await _extract_memory(user_id, question, answer)
+        return "inline-development"
+    return await enqueue(
+        "memory.extract", {"user_id": user_id, "question": question, "answer": answer}
+    )

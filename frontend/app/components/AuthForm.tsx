@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FormEvent, useState } from "react";
-import { ArrowRight, Eye, EyeOff, Lock, Mail, Sparkles, User as UserIcon } from "lucide-react";
+import { ArrowRight, CheckCircle2, Eye, EyeOff, Lock, Mail, Sparkles, User as UserIcon } from "lucide-react";
 import { api, messageFromError, User } from "../lib/api";
 
 export default function AuthForm({ mode }: { mode: "login" | "register" }) {
@@ -16,8 +16,27 @@ export default function AuthForm({ mode }: { mode: "login" | "register" }) {
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError("");
-    setLoading(true);
     const data = new FormData(event.currentTarget);
+    const email = String(data.get("email") ?? "").trim().toLowerCase();
+    const password = String(data.get("password") ?? "");
+    const name = String(data.get("name") ?? "").trim();
+
+    // Browser type=email accepts some local/intranet shapes that Pydantic's
+    // EmailStr correctly rejects. Match the API contract before sending so a
+    // validation mistake never becomes a noisy 422 network request.
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) {
+      setError("Enter a valid email address, for example you@example.com.");
+      return;
+    }
+    if (!password || (!isLogin && password.length < 8)) {
+      setError(isLogin ? "Enter your password." : "Password must be at least 8 characters.");
+      return;
+    }
+    if (!isLogin && name.length < 2) {
+      setError("Full name must be at least 2 characters.");
+      return;
+    }
+    setLoading(true);
 
     try {
       await api<{ user: User }>(
@@ -25,9 +44,9 @@ export default function AuthForm({ mode }: { mode: "login" | "register" }) {
         {
           method: "POST",
           body: JSON.stringify({
-            ...(!isLogin ? { name: data.get("name") } : {}),
-            email: data.get("email"),
-            password: data.get("password"),
+            ...(!isLogin ? { name } : {}),
+            email,
+            password,
           }),
         },
       );
@@ -46,6 +65,11 @@ export default function AuthForm({ mode }: { mode: "login" | "register" }) {
         <div className="auth-quote">
           <span className="quote-mark">“</span>
           <blockquote>Learning never exhausts the mind. It only ignites it.</blockquote>
+          <ul className="auth-benefits" aria-label="Studia benefits">
+            <li><CheckCircle2 aria-hidden="true" /> Turn notes into focused study plans</li>
+            <li><CheckCircle2 aria-hidden="true" /> Review with quizzes and flashcards</li>
+            <li><CheckCircle2 aria-hidden="true" /> Ask your AI tutor at any time</li>
+          </ul>
           <p>— Leonardo da Vinci</p>
         </div>
         <div className="auth-shape shape-a" /><div className="auth-shape shape-b" /><div className="auth-shape shape-c" />
@@ -59,7 +83,7 @@ export default function AuthForm({ mode }: { mode: "login" | "register" }) {
             <h1>{isLogin ? "Continue your journey." : "Create your account."}</h1>
             <p>{isLogin ? "Sign in to pick up right where you left off." : "Join Studia and make every study session count."}</p>
           </div>
-          <form onSubmit={submit}>
+          <form onSubmit={submit} aria-busy={loading}>
             {!isLogin && (
               <label>Full name
                 <div className="input-icon-wrap">

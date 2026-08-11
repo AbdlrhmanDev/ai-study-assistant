@@ -8,6 +8,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ...core.exceptions import AppError
 from ..ai import provider
 from ..ai import repository as ai_repository
+from ..graph_builds import repository as build_status_repository
+from ..graph_builds import service as build_status_service
 from ..mastery import repository as mastery_repository
 from ..mastery import scoring as mastery_scoring
 from ..mastery import service as mastery_service
@@ -17,6 +19,8 @@ from ..topics import service as topics_service
 from . import repository
 from .exceptions import ConceptNotFoundError, GraphExtractionParseError, NoGraphSourceContentError
 from .model import RELATION_TYPES
+
+BUILD_TYPE = "knowledge_graph"
 
 MAX_EVIDENCE_CHARS = 12000
 MIN_CONCEPTS_TO_SHOW = 3
@@ -141,6 +145,20 @@ def normalize_extracted_relations(raw_relations: list, valid_names_lower: set[st
     return clean
 
 
+async def request_graph_rebuild(db: AsyncSession, topic_id: int, user_id: int) -> dict:
+    """Kicks off an async rebuild: 202-shaped -- returns build status, not
+    the graph itself. In production (REDIS_URL set) this enqueues a durable
+    job and returns immediately; without Redis (local dev/tests) the
+    rebuild runs inline before returning, reusing this same session."""
+    await topics_service.get_owned_topic_or_404(db, topic_id, user_id)
+    await build_status_repository.set_status(db, topic_id=topic_id, build_type=BUILD_TYPE, status="pending")
+    await db.commit()
+
+    from .jobs import enqueue_graph_rebuild
+    await enqueue_graph_rebuild(db, topic_id, user_id)
+    return await build_status_service.get_build_status(db, topic_id=topic_id, build_type=BUILD_TYPE)
+
+
 async def rebuild_graph(db: AsyncSession, topic_id: int, user_id: int) -> dict:
     topic = await topics_service.get_owned_topic_or_404(db, topic_id, user_id)
     evidence = await _gather_evidence(db, topic_id, user_id)
@@ -190,9 +208,10 @@ async def rebuild_graph(db: AsyncSession, topic_id: int, user_id: int) -> dict:
 
 async def get_graph(db: AsyncSession, topic_id: int, user_id: int, *, _skip_activity_log: bool = False) -> dict:
     await topics_service.get_owned_topic_or_404(db, topic_id, user_id)
+    build_status = await build_status_service.get_build_status(db, topic_id=topic_id, build_type=BUILD_TYPE)
     nodes = await mastery_service.list_all_concepts_with_mastery(db, topic_id, user_id)
     if len(nodes) < MIN_CONCEPTS_TO_SHOW:
-        return {"nodes": [], "edges": [], "belowMinimum": True}
+        return {"nodes": [], "edges": [], "belowMinimum": True, "buildStatus": build_status}
 
     concept_ids = [node["conceptId"] for node in nodes]
     relations = await repository.list_relations_for_concepts(db, concept_ids)
@@ -225,6 +244,7 @@ async def get_graph(db: AsyncSession, topic_id: int, user_id: int, *, _skip_acti
             for relation in relations
         ],
         "belowMinimum": False,
+        "buildStatus": build_status,
     }
 
 

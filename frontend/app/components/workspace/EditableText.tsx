@@ -11,6 +11,7 @@ type Props = {
   className?: string;
   placeholder?: string;
   autoFocus?: boolean;
+  dir?: "auto" | "ltr" | "rtl";
 };
 
 /** A plain-text contentEditable primitive shared by every text-bearing
@@ -29,6 +30,7 @@ export default function EditableText({
   className,
   placeholder,
   autoFocus,
+  dir = "auto",
 }: Props) {
   const ref = useRef<HTMLDivElement>(null);
 
@@ -56,7 +58,7 @@ export default function EditableText({
       className={className}
       contentEditable
       suppressContentEditableWarning
-      dir="auto"
+      dir={dir}
       data-placeholder={placeholder}
       onInput={(event) => onChange(getPlainText(event.currentTarget), event.currentTarget)}
       onKeyDown={onKeyDown}

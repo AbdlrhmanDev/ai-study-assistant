@@ -93,16 +93,21 @@ text in the database.
 
 ## Tests
 
-Tests need a real PostgreSQL instance (the schema uses Postgres-specific
-identity columns, JSONB, and functional indexes -- no SQLite). By default they
-run against `ai_study_assistant_test` on the same server as `DATABASE_URL`,
-created automatically; override with `TEST_DATABASE_URL` if needed.
+Tests need a real PostgreSQL instance with pgvector (the schema uses
+Postgres-specific identity columns, JSONB, vector columns, and functional
+indexes -- no SQLite). Tests deliberately ignore the database URL in `.env`
+to prevent accidental use of a developer or production database. They use
+`TEST_DATABASE_URL`, defaulting to the local Compose database
+`ai_study_assistant_test`.
 
 ```powershell
+$env:TEST_DATABASE_URL="postgresql://postgres:postgres@localhost:5433/ai_study_assistant_test"
+$env:DATABASE_URL=$env:TEST_DATABASE_URL
+$env:DATABASE_SSL="false"
+python -m alembic upgrade head
 python -m pytest
 ```
 
-`tests/unit` covers pure logic (RAG retrieval, pagination math, config
-validation) with no DB. `tests/integration` drives the app through
-`TestClient` against the real test database, covering the full auth/session
-lifecycle, CRUD ownership rules, rate limiting, and security headers.
+The suite covers pure logic and API/database integration, including auth,
+CRUD ownership, document upload, AI-provider fallback, generation flows,
+rate limiting, exports, and security headers.

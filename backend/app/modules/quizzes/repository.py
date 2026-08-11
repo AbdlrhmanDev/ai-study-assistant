@@ -108,6 +108,18 @@ async def list_by_topic(db: AsyncSession, topic_id: int) -> list[Quiz]:
     return list(result.scalars().all())
 
 
+async def count_by_topic_for_user(db: AsyncSession, user_id: int) -> dict[int, int]:
+    """Return every owned topic's quiz count in one database round trip."""
+    stmt = (
+        select(Topic.id, func.count(Quiz.id))
+        .outerjoin(Quiz, Quiz.topic_id == Topic.id)
+        .where(Topic.user_id == user_id)
+        .group_by(Topic.id)
+    )
+    result = await db.execute(stmt)
+    return {topic_id: count for topic_id, count in result.all()}
+
+
 async def count_questions_by_quiz_ids(db: AsyncSession, quiz_ids: list[int]) -> dict[int, int]:
     if not quiz_ids:
         return {}

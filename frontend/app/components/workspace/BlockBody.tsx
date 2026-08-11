@@ -191,6 +191,7 @@ function CodeBlockView({
     <div className="workspace-code-block">
       <input
         className="workspace-code-language"
+        dir="ltr"
         value={block.properties.language ?? ""}
         placeholder="plaintext"
         onChange={(event) => editor.updateBlockProperties(block.id, { language: event.target.value })}
@@ -202,6 +203,7 @@ function CodeBlockView({
         onKeyDown={onKeyDown}
         className="workspace-code-area"
         placeholder="Code"
+        dir="ltr"
       />
     </div>
   );

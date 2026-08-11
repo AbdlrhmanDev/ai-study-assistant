@@ -1,4 +1,5 @@
 import logging
+import re
 import sys
 import time
 import uuid
@@ -11,14 +12,39 @@ from starlette.responses import Response
 
 from .config import get_settings
 
-REDACT_KEYS = {"password", "password_hash", "authorization", "cookie"}
+REDACT_KEYS = {
+    "password", "password_hash", "authorization", "cookie",
+    "s3_secret_access_key", "s3_access_key_id", "redis_url", "session_secret",
+    "database_url", "api_key", "gemini_api_key", "groq_api_key", "openai_api_key",
+}
 REDACTED = "[REDACTED]"
+
+# Key-based redaction only catches values stored under a known-sensitive
+# field name. This backstops values embedded in free-text log fields (e.g.
+# an exception message that happened to include a connection string or an
+# Authorization header value) that wouldn't otherwise be caught.
+_SENSITIVE_VALUE_PATTERNS = (
+    re.compile(r"[a-zA-Z][a-zA-Z0-9+.-]*://[^:\s]+:[^@\s]+@\S+"),  # user:pass@host connection strings
+    re.compile(r"\bBearer\s+[A-Za-z0-9._-]+", re.IGNORECASE),  # Authorization: Bearer <token>
+)
+
+
+def _scrub_value_patterns(value: str) -> str:
+    for pattern in _SENSITIVE_VALUE_PATTERNS:
+        value = pattern.sub(REDACTED, value)
+    return value
 NOISY_THIRD_PARTY_LOGGERS = (
+    "boto3",
+    "botocore",
     "groq",
     "httpx",
     "httpcore",
+    "multipart",
     "openai",
     "google_genai",
+    "python_multipart",
+    "s3transfer",
+    "urllib3",
 )
 
 SECURITY_HEADERS = {
@@ -37,6 +63,8 @@ def _scrub(value: object) -> object:
         }
     if isinstance(value, list):
         return [_scrub(item) for item in value]
+    if isinstance(value, str):
+        return _scrub_value_patterns(value)
     return value
 
 
@@ -48,6 +76,7 @@ def configure_logging() -> None:
     settings = get_settings()
     level = getattr(logging, settings.log_level.upper(), logging.INFO)
 
+
     shared_processors: list = [
         structlog.contextvars.merge_contextvars,
         structlog.processors.add_log_level,
@@ -55,7 +84,6 @@ def configure_logging() -> None:
         _redact_processor,
         structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
     ]
-
     structlog.configure(
         processors=shared_processors,
         logger_factory=structlog.stdlib.LoggerFactory(),
@@ -89,6 +117,14 @@ def configure_logging() -> None:
 
 
 logger = structlog.get_logger("study_assistant")
+
+
+def current_correlation_id() -> str | None:
+    """The originating request's X-Request-Id, if this code is running
+    within a request (bound by RequestContextMiddleware). Used to tag
+    enqueued jobs so their logs can be correlated back to the request that
+    triggered them."""
+    return structlog.contextvars.get_contextvars().get("request_id")
 
 
 class RequestContextMiddleware(BaseHTTPMiddleware):

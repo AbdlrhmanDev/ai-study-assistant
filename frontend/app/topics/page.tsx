@@ -1,2 +1,2 @@
-import { TopicsPage } from "../components/BackendPages";
+import { TopicsPage } from "../components/pages/TopicsPage";
 export default function Page(){return <TopicsPage/>}

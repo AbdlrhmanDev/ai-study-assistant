@@ -1,0 +1,127 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend:
+    name: Frontend lint, test, and build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.13.0
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run lint -- --max-warnings=0
+      - run: npm test
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e
+
+  backend:
+    name: Backend tests and migrations
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: ai_study_assistant_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d ai_study_assistant_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/ai_study_assistant_test
+      TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/ai_study_assistant_test
+      DATABASE_SSL: "false"
+      NODE_ENV: test
+      SESSION_SECRET: ci-only-session-secret-not-for-production
+      CLIENT_ORIGINS: http://localhost:3000
+      AI_PROVIDER: gemini
+      EMBEDDING_PROVIDER: gemini
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: python -m pip install --upgrade pip
+      - run: python -m pip install -r requirements.txt
+      - name: Enable pgvector
+        run: psql "$DATABASE_URL" -c "CREATE EXTENSION IF NOT EXISTS vector"
+      - name: Upgrade empty database to Alembic head
+        run: python -m alembic upgrade head
+      - name: Verify one migration head
+        run: test "$(python -m alembic heads | wc -l)" -eq 1
+      - name: Check models match migrations
+        run: python -m alembic check
+      - name: Critical journey smoke tests
+        run: >-
+          python -m pytest
+          tests/test_auth.py::test_register_creates_user_and_sets_session
+          tests/test_auth.py::test_login_success_sets_session
+          tests/test_topics.py::test_create_topic_returns_201
+          tests/test_notes.py::test_create_note_returns_201
+          tests/test_documents.py::test_upload_list_and_delete_document
+          tests/test_ai_provider.py::test_provider_falls_back_immediately_after_rate_limit
+          tests/test_quizzes.py::test_generate_quiz_creates_quiz_and_questions
+          tests/test_flashcards.py::test_review_flashcard_updates_schedule_and_awards_xp
+          tests/test_export.py::test_export_notes_csv_contains_all_notes
+      - run: python -m pytest --maxfail=1
+
+  dependency-audit:
+    name: Dependency vulnerability audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.13.0
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: npm ci
+        working-directory: frontend
+      - name: Audit production dependencies (fail on critical findings)
+        run: npm audit --omit=dev --audit-level=critical
+        working-directory: frontend
+      - run: python -m pip install pip-audit
+      - run: python -m pip_audit -r backend/requirements.txt
+
+  secret-scan:
+    name: Secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

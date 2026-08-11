@@ -260,6 +260,10 @@ async def list_exams(db: AsyncSession, topic_id: int, user_id: int) -> list[dict
     ]
 
 
+async def count_exams_by_topic(db: AsyncSession, user_id: int) -> dict[int, int]:
+    return await repository.count_by_topic_for_user(db, user_id)
+
+
 async def get_exam_for_taking(db: AsyncSession, exam_id: int, user_id: int) -> tuple[Exam, list]:
     exam = await repository.get_exam_for_user(db, exam_id, user_id)
     if exam is None:

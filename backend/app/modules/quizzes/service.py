@@ -353,6 +353,10 @@ async def list_quizzes(db: AsyncSession, topic_id: int, user_id: int) -> list[di
     ]
 
 
+async def count_quizzes_by_topic(db: AsyncSession, user_id: int) -> dict[int, int]:
+    return await repository.count_by_topic_for_user(db, user_id)
+
+
 async def get_quiz_for_taking(db: AsyncSession, quiz_id: int, user_id: int) -> tuple[Quiz, list[QuestionWithSource]]:
     quiz = await repository.get_quiz_for_user(db, quiz_id, user_id)
     if quiz is None:

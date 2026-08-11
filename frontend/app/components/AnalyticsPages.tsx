@@ -3,8 +3,9 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { Clock, Flame, Layers, Target } from "lucide-react";
-import { PageShell, useAuthFailure } from "./BackendPages";
+import { PageShell, useAuthFailure } from "./shared/PageChrome";
 import { api, messageFromError } from "../lib/api";
+import { LoadingState } from "./ui";
 
 type ActivityTrendPoint = { date: string; count: number };
 
@@ -49,6 +50,12 @@ type AnalyticsOverview = {
 
 const DAY_LABELS = ["S", "M", "T", "W", "T", "F", "S"];
 
+function masteryTone(score: number | null) {
+  if (score === null || score < 0.4) return "mastery-low";
+  if (score < 0.7) return "mastery-mid";
+  return "mastery-high";
+}
+
 export function AnalyticsPage() {
   const handleAuthFailure = useAuthFailure();
   const [overview, setOverview] = useState<AnalyticsOverview | null>(null);
@@ -68,10 +75,10 @@ export function AnalyticsPage() {
   const maxTrendCount = overview ? Math.max(1, ...overview.activityTrend.map((point) => point.count)) : 1;
 
   return (
-    <PageShell title="Analytics" subtitle="A platform-wide view of your progress and habits.">
+    <PageShell className="analytics-page" title="Analytics" subtitle="A platform-wide view of your progress and habits.">
       {error && <p className="page-error" role="alert">{error}</p>}
       {loading || !overview ? (
-        <div className="empty">Loading your analytics…</div>
+        <LoadingState label="Loading your analytics…" />
       ) : (
         <>
           <div className="stats">
@@ -126,12 +133,7 @@ export function AnalyticsPage() {
                         <h3>{topic.title}</h3>
                         <small>{topic.conceptCount} concept{topic.conceptCount === 1 ? "" : "s"} · {topic.levelName} · {topic.totalXp} XP</small>
                       </div>
-                      <div className="weak-concept-bar-track">
-                        <div
-                          className="weak-concept-bar-fill"
-                          style={{ width: `${topic.averageMastery === null ? 0 : Math.round(topic.averageMastery * 100)}%` }}
-                        />
-                      </div>
+                      <div className={`mastery-bar ${masteryTone(topic.averageMastery)}`} role="progressbar" aria-label={`${topic.title} mastery`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={topic.averageMastery === null ? 0 : Math.round(topic.averageMastery * 100)} style={{ ["--mastery" as string]: `${topic.averageMastery === null ? 0 : Math.round(topic.averageMastery * 100)}%` }}><span /></div>
                       <span className="weak-concept-value">
                         {topic.averageMastery === null ? "—" : `${Math.round(topic.averageMastery * 100)}%`}
                       </span>
@@ -169,13 +171,8 @@ export function AnalyticsPage() {
               <div className="weak-concept-list">
                 {overview.weakestConcepts.map((concept) => (
                   <div className="weak-concept-row" key={concept.conceptId}>
-                    <span className="weak-concept-name" title={concept.conceptName}>{concept.conceptName}</span>
-                    <div className="weak-concept-bar-track">
-                      <div
-                        className={`weak-concept-bar-fill${concept.masteryScore < 0.4 ? " weak" : ""}`}
-                        style={{ width: `${Math.round(concept.masteryScore * 100)}%` }}
-                      />
-                    </div>
+                    <div className="weak-concept-name" title={concept.conceptName}><span>{concept.conceptName}</span><small>{concept.topicTitle}</small></div>
+                    <div className={`mastery-bar ${masteryTone(concept.masteryScore)}`} role="progressbar" aria-label={`${concept.conceptName} mastery`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(concept.masteryScore * 100)} style={{ ["--mastery" as string]: `${Math.round(concept.masteryScore * 100)}%` }}><span /></div>
                     <span className="weak-concept-value">{Math.round(concept.masteryScore * 100)}%</span>
                   </div>
                 ))}

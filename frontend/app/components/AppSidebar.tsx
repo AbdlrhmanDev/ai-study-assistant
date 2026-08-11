@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import {
@@ -10,6 +11,7 @@ import {
   ChevronRight,
   ClipboardCheck,
   History,
+  Home,
   Layers,
   LayoutDashboard,
   ListChecks,
@@ -17,14 +19,16 @@ import {
   Menu,
   Moon,
   NotebookPen,
+  Brain,
   Settings as SettingsIcon,
   Sparkles,
   Sun,
   Target,
   X,
 } from "lucide-react";
-import { api } from "../lib/api";
-import { useTheme } from "./ThemeProvider";
+import { api, apiAssetUrl, User, warmApi } from "../lib/api";
+import { useTheme } from "./theme-context";
+import { CommandPalette } from "./CommandPalette";
 
 const mainItems = [
   { href: "/dashboard", Icon: LayoutDashboard, label: "Overview" },
@@ -36,8 +40,23 @@ const mainItems = [
   { href: "/exams", Icon: ClipboardCheck, label: "Exams" },
   { href: "/ai-tutor", Icon: Sparkles, label: "AI tutor" },
   { href: "/study-history", Icon: History, label: "Study history" },
+  { href: "/mistakes", Icon: Brain, label: "Mistake notebook" },
   { href: "/analytics", Icon: BarChart3, label: "Analytics" },
 ];
+
+const routeWarmups: Record<string, string[]> = {
+  "/dashboard": ["/dashboard"],
+  "/topics": ["/topics"],
+  "/workspace": ["/workspace-pages", "/topics"],
+  "/coach": ["/coach/plan/today", "/topics", "/coach/goals", "/goal-predictions"],
+  "/flashcards": ["/topics", "/flashcards/stats-summary", "/flashcards/stats-by-topic"],
+  "/quizzes": ["/topics", "/quizzes/counts-by-topic"],
+  "/exams": ["/topics", "/exams/counts-by-topic"],
+  "/ai-tutor": ["/topics"],
+  "/analytics": ["/analytics/overview"],
+  "/study-history": ["/study-history?page=1&limit=20", "/study-history/stats"],
+  "/mistakes": ["/mistakes"],
+};
 
 export default function AppSidebar() {
   const pathname = usePathname();
@@ -45,6 +64,14 @@ export default function AppSidebar() {
   const { theme, toggleTheme } = useTheme();
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [user, setUser] = useState<User | null>(null);
+
+  useEffect(() => {
+    const loadProfile = () => api<{ user: User | null }>("/auth/me").then((result) => setUser(result.user)).catch(() => null);
+    void loadProfile();
+    window.addEventListener("studia:profile-updated", loadProfile);
+    return () => window.removeEventListener("studia:profile-updated", loadProfile);
+  }, []);
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
@@ -55,10 +82,6 @@ export default function AppSidebar() {
 
     return () => window.cancelAnimationFrame(frame);
   }, []);
-
-  useEffect(() => {
-    setMobileOpen(false);
-  }, [pathname]);
 
   useEffect(() => {
     if (!mobileOpen) return;
@@ -88,18 +111,34 @@ export default function AppSidebar() {
     (href === "/quizzes" && pathname.startsWith("/quizzes/")) ||
     (href === "/exams" && pathname.startsWith("/exams/"));
 
+  function warmNavigation(href: string) {
+    router.prefetch(href);
+    for (const endpoint of routeWarmups[href] ?? []) {
+      void warmApi(endpoint).catch(() => undefined);
+    }
+  }
+
   return (
     <>
+      <CommandPalette />
+      <header className="mobile-app-header">
+        <Link className="mobile-app-brand" href="/dashboard" aria-label="Studia home"><span className="brand-mark">s</span><strong>studia</strong></Link>
+        <Link className="mobile-profile-link" href="/settings" aria-label="Open profile settings">
+          {apiAssetUrl(user?.profileImageUrl) ? <Image src={apiAssetUrl(user?.profileImageUrl) ?? ""} alt="" width={44} height={44} unoptimized /> : <span>{user?.name?.split(/\s+/).map((part) => part[0]).slice(0, 2).join("").toUpperCase() || "ST"}</span>}
+        </Link>
+      </header>
       <button
         className="sidebar-mobile-trigger"
         type="button"
         onClick={() => setMobileOpen(true)}
         aria-label="Open menu"
+        aria-expanded={mobileOpen}
+        aria-controls="studia-sidebar"
       >
         <Menu size={19} strokeWidth={1.8} />
       </button>
       {mobileOpen && <div className="sidebar-backdrop" onClick={() => setMobileOpen(false)} />}
-      <aside className={`sidebar ${collapsed ? "collapsed" : ""} ${mobileOpen ? "mobile-open" : ""}`}>
+      <aside id="studia-sidebar" aria-label="Primary navigation" className={`sidebar ${collapsed ? "collapsed" : ""} ${mobileOpen ? "mobile-open" : ""}`}>
       <div className="sidebar-heading">
         <Link className="sidebar-brand brand" href="/dashboard"><span className="brand-mark">s</span><strong>studia</strong></Link>
         <button
@@ -120,9 +159,9 @@ export default function AppSidebar() {
           <X size={18} />
         </button>
       </div>
-      <nav>
+      <nav aria-label="Study tools">
         {mainItems.map((item) => (
-          <Link className={isActive(item.href) ? "active" : ""} href={item.href} key={item.href} title={collapsed ? item.label : undefined}>
+          <Link className={isActive(item.href) ? "active" : ""} href={item.href} key={item.href} title={collapsed ? item.label : undefined} onPointerEnter={() => warmNavigation(item.href)} onFocus={() => warmNavigation(item.href)} onTouchStart={() => warmNavigation(item.href)} onClick={() => setMobileOpen(false)}>
             <span><item.Icon size={19} strokeWidth={1.8} /></span><em>{item.label}</em>
           </Link>
         ))}
@@ -142,6 +181,21 @@ export default function AppSidebar() {
         <button className="sidebar-logout" type="button" onClick={logout} title={collapsed ? "Log out" : undefined}><span><LogOut size={19} strokeWidth={1.8} /></span><em>Log out</em></button>
       </div>
       </aside>
+      <nav className="dashboard-mobile-nav" aria-label="Quick navigation">
+        <Link className={pathname === "/dashboard" ? "active" : ""} href="/dashboard" onPointerEnter={() => warmNavigation("/dashboard")} onFocus={() => warmNavigation("/dashboard")} onTouchStart={() => warmNavigation("/dashboard")} aria-current={pathname === "/dashboard" ? "page" : undefined}><Home size={20} /><span>Home</span></Link>
+        <Link className={isActive("/topics") ? "active" : ""} href="/topics" onTouchStart={() => warmNavigation("/topics")} aria-current={isActive("/topics") ? "page" : undefined}><BookOpen size={20} /><span>Topics</span></Link>
+        <Link className={pathname === "/ai-tutor" ? "active" : ""} href="/ai-tutor" onPointerEnter={() => warmNavigation("/ai-tutor")} onFocus={() => warmNavigation("/ai-tutor")} onTouchStart={() => warmNavigation("/ai-tutor")} aria-current={pathname === "/ai-tutor" ? "page" : undefined}><Sparkles size={20} /><span>AI tutor</span></Link>
+        <Link className={pathname === "/settings" ? "active" : ""} href="/settings" aria-current={pathname === "/settings" ? "page" : undefined}><SettingsIcon size={20} /><span>Settings</span></Link>
+        <button type="button" popoverTarget="app-more-menu" onClick={() => warmNavigation("/workspace")} aria-label="Open more navigation" aria-controls="app-more-menu"><Menu size={20} /><span>More</span></button>
+      </nav>
+      <section id="app-more-menu" className="dashboard-more-sheet" popover="auto" role="dialog" aria-labelledby="app-more-title">
+        <header><div><span>STUDY TOOLS</span><h2 id="app-more-title">More</h2></div><button type="button" popoverTarget="app-more-menu" popoverTargetAction="hide" aria-label="Close more navigation"><X size={20} /></button></header>
+        <nav aria-label="More study tools">
+          {mainItems.filter((item) => !["/dashboard", "/topics", "/ai-tutor"].includes(item.href)).map((item) => (
+            <Link className={isActive(item.href) ? "active" : ""} href={item.href} key={item.href} onPointerEnter={() => warmNavigation(item.href)} onFocus={() => warmNavigation(item.href)} onTouchStart={() => warmNavigation(item.href)}><item.Icon size={20}/><span>{item.label}</span></Link>
+          ))}
+        </nav>
+      </section>
     </>
   );
 }

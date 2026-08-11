@@ -4,9 +4,10 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import { NotebookPen, Plus, Sparkles, Trash2, X } from "lucide-react";
-import { PageShell, useAuthFailure } from "./BackendPages";
+import { PageShell, useAuthFailure } from "./shared/PageChrome";
 import { api, messageFromError, Topic } from "../lib/api";
 import { WorkspaceBlock, WorkspacePage } from "./workspace/types";
+import { Badge, Button, EmptyState, LoadingState } from "./ui";
 
 function blockPreview(blocks: WorkspaceBlock[]): string {
   for (const block of blocks) {
@@ -97,55 +98,57 @@ export function WorkspaceListPage() {
 
   return (
     <PageShell
+      className="workspace-list-page"
       title="Workspace"
       subtitle="Freeform pages for notes, checklists, and saved resources -- your way of organizing things."
-      action={<button className="button button-primary" onClick={() => setShowModal(true)}><Plus size={16} strokeWidth={2.2} /> New page</button>}
+      action={<Button variant="primary" onClick={() => setShowModal(true)}><Plus size={16} strokeWidth={2.2} /> New page</Button>}
     >
       {error && <p className="page-error" role="alert">{error}</p>}
       {loading ? (
-        <div className="empty">Loading your pages…</div>
+        <LoadingState label="Loading your pages…" />
       ) : (
         <div className="workspace-grid">
           {pages.map((page) => {
             const linkedTitle = topicTitle(page.topic_id);
             return (
-              <Link className="workspace-card" href={`/workspace-page?id=${page.id}`} key={page.id}>
+              <article className="workspace-card" key={page.id}>
                 <div className="workspace-card-top">
                   <span className="topic-icon purple"><NotebookPen size={18} strokeWidth={1.8} /></span>
                   <button
                     type="button"
                     className="danger-link"
-                    onClick={(event) => {
-                      event.preventDefault();
-                      event.stopPropagation();
+                    aria-label={`Delete ${page.title}`}
+                    onClick={() => {
                       setDeleteError("");
                       setDeletingPage(page);
                     }}
                   >
-                    Delete
+                    <Trash2 size={17} aria-hidden="true" /><span>Delete</span>
                   </button>
                 </div>
-                {linkedTitle && <span className="workspace-card-topic">{linkedTitle}</span>}
-                <h2>{page.title}</h2>
-                <p className="workspace-card-preview">{blockPreview(page.blocks)}</p>
-                <div className="workspace-card-meta">Updated {new Date(page.updated_at).toLocaleDateString()}</div>
-              </Link>
+                <Link className="workspace-card-link" href={`/workspace-page?id=${page.id}`}>
+                  <Badge tone={linkedTitle ? "accent" : "neutral"}>{linkedTitle ?? "Personal page"}</Badge>
+                  <h2 dir="auto">{page.title}</h2>
+                  <p className="workspace-card-preview" dir="auto">{blockPreview(page.blocks)}</p>
+                  <div className="workspace-card-meta">Updated {new Date(page.updated_at).toLocaleDateString()}</div>
+                  <span className="workspace-open-page" aria-hidden="true">Open page <span>→</span></span>
+                </Link>
+              </article>
             );
           })}
-          {!pages.length && (
-            <div className="workspace-empty">
-              No pages yet. Create one to start collecting notes, checklists, and links in one place.
-            </div>
-          )}
+          {!pages.length && <EmptyState Icon={NotebookPen} title="Your workspace is ready" description="Create a page to collect notes, checklists, and useful links in one place." action={<Button variant="primary" onClick={() => setShowModal(true)}><Plus size={16} /> Create page</Button>} />}
         </div>
       )}
       {showModal && (
         <div className="modal-backdrop" onMouseDown={() => setShowModal(false)}>
-          <form className="topic-modal action-modal" onSubmit={createPage} onMouseDown={(event) => event.stopPropagation()}>
-            <button type="button" className="modal-close" onClick={() => setShowModal(false)}><X size={22} /></button>
+          <form
+            role="dialog" aria-modal="true" aria-labelledby="create-workspace-page-title"
+            className="topic-modal action-modal" onSubmit={createPage} onMouseDown={(event) => event.stopPropagation()}
+          >
+            <button type="button" className="modal-close" aria-label="Close" onClick={() => setShowModal(false)}><X size={22} /></button>
             <div className="modal-icon edit-icon"><Sparkles size={22} /></div>
             <div className="eyebrow">NEW WORKSPACE PAGE</div>
-            <h2>Create a page</h2>
+            <h2 id="create-workspace-page-title">Create a page</h2>
             <label>Page title<input name="title" required maxLength={200} autoFocus /></label>
             <label>Link to a topic (optional)
               <select name="topic_id" defaultValue="">
@@ -163,7 +166,7 @@ export function WorkspaceListPage() {
       {deletingPage && (
         <div className="modal-backdrop" onMouseDown={() => (deleteBusy ? null : setDeletingPage(null))}>
           <div role="alertdialog" aria-modal="true" aria-labelledby="delete-page-title" className="topic-modal action-modal delete-modal" onMouseDown={(event) => event.stopPropagation()}>
-            <button type="button" className="modal-close" disabled={deleteBusy} onClick={() => setDeletingPage(null)}><X size={22} /></button>
+            <button type="button" className="modal-close" aria-label="Close" disabled={deleteBusy} onClick={() => setDeletingPage(null)}><X size={22} /></button>
             <div className="modal-icon delete-icon"><Trash2 size={22} /></div>
             <div className="eyebrow">REMOVE THIS PAGE</div>
             <h2 id="delete-page-title">Delete “{deletingPage.title}”?</h2>

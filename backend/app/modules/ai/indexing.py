@@ -1,9 +1,9 @@
 import structlog
-from fastapi import BackgroundTasks
 
 from ...core.config import get_settings
 from ...db.session import get_sessionmaker
 from ..notes.model import Note
+from ..topics.model import Topic
 from . import repository
 from .chunking import chunk_text
 from .embedding import generate_embeddings
@@ -13,14 +13,16 @@ from .text_extraction import extract_text
 logger = structlog.get_logger("study_assistant")
 
 
-async def _safe_generate_embeddings(chunks: list[str]) -> list[list[float] | None]:
+async def _safe_generate_embeddings(
+    chunks: list[str], *, user_id: int | None = None
+) -> list[list[float] | None]:
     """Best-effort embedding: if the provider fails (outage, bad key), still
     return one `None` per chunk so the chunk text itself gets stored and
     stays findable via BM25 -- only vector search loses coverage for it."""
     if not chunks:
         return []
     try:
-        return await generate_embeddings(chunks)
+        return await generate_embeddings(chunks, user_id=user_id)
     except Exception:
         logger.warning("embedding_failed_storing_chunks_without_vectors", exc_info=True)
         return [None] * len(chunks)
@@ -40,9 +42,12 @@ async def _index_note(note_id: int) -> None:
             return  # deleted before the task ran
 
         try:
+            topic = await db.get(Topic, note.topic_id)
             settings = get_settings()
             chunks = chunk_text(note.content, settings.rag_chunk_size, settings.rag_chunk_overlap)
-            embeddings = await _safe_generate_embeddings(chunks)
+            embeddings = await _safe_generate_embeddings(
+                chunks, user_id=topic.user_id if topic else None
+            )
             await repository.replace_note_chunks(
                 db, note_id=note.id, topic_id=note.topic_id, chunks=chunks, embeddings=embeddings,
             )
@@ -52,8 +57,16 @@ async def _index_note(note_id: int) -> None:
             logger.warning("note_indexing_failed", note_id=note_id, exc_info=True)
 
 
-def index_note_in_background(background_tasks: BackgroundTasks, note_id: int) -> None:
-    background_tasks.add_task(_index_note, note_id)
+async def enqueue_note_index(note_id: int) -> str:
+    from ...core.jobs import enqueue
+    from ...core.logging import current_correlation_id
+    if not get_settings().redis_url:
+        await _index_note(note_id)
+        return "inline-development"
+    return await enqueue(
+        "note.index", {"note_id": note_id}, idempotency_key=f"note.index:{note_id}",
+        correlation_id=current_correlation_id(),
+    )
 
 
 async def _index_document(document_id: int) -> None:
@@ -66,6 +79,7 @@ async def _index_document(document_id: int) -> None:
             await repository.update_document_status(db, document_id, status="processing")
             await db.commit()
 
+            topic = await db.get(Topic, document.topic_id)
             storage = get_storage_backend()
             raw_bytes = storage.read(document.storage_path)
             extracted_text = extract_text(document.content_type, raw_bytes)
@@ -74,7 +88,9 @@ async def _index_document(document_id: int) -> None:
             chunks = chunk_text(
                 extracted_text, settings.rag_chunk_size, settings.rag_chunk_overlap
             )
-            embeddings = await _safe_generate_embeddings(chunks)
+            embeddings = await _safe_generate_embeddings(
+                chunks, user_id=topic.user_id if topic else None
+            )
 
             await repository.insert_document_chunks(
                 db, document_id=document.id, topic_id=document.topic_id,
@@ -93,5 +109,14 @@ async def _index_document(document_id: int) -> None:
             await db.commit()
 
 
-def index_document_in_background(background_tasks: BackgroundTasks, document_id: int) -> None:
-    background_tasks.add_task(_index_document, document_id)
+async def enqueue_document_index(document_id: int) -> str:
+    from ...core.jobs import enqueue
+    from ...core.logging import current_correlation_id
+    if not get_settings().redis_url:
+        await _index_document(document_id)
+        return "inline-development"
+    return await enqueue(
+        "document.index", {"document_id": document_id},
+        idempotency_key=f"document.index:{document_id}",
+        correlation_id=current_correlation_id(),
+    )

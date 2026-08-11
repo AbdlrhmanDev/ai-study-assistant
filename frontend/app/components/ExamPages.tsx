@@ -18,8 +18,9 @@ import {
   X,
   XCircle,
 } from "lucide-react";
-import { PageShell, useAuthFailure } from "./BackendPages";
-import { api, Topic, messageFromError } from "../lib/api";
+import { PageShell, useAuthFailure } from "./shared/PageChrome";
+import { api, idempotencyHeader, Topic, messageFromError } from "../lib/api";
+import { LoadingState } from "./ui";
 
 export type ExamQuestionType = "multiple_choice" | "true_false" | "short_answer" | "essay" | "case_study" | "coding";
 export type BloomsLevel = "remember" | "understand" | "apply" | "analyze" | "evaluate" | "create";
@@ -137,16 +138,12 @@ export function ExamsPage() {
     setLoading(true);
     setError("");
     try {
-      const topicsResult = await api<{ topics: Topic[] }>("/topics");
+      const [topicsResult, countsResult] = await Promise.all([
+        api<{ topics: Topic[] }>("/topics"),
+        api<{ counts: Record<number, number> }>("/exams/counts-by-topic"),
+      ]);
       setTopics(topicsResult.topics);
-      const counts = await Promise.all(
-        topicsResult.topics.map((topic) =>
-          api<{ exams: ExamListEntry[] }>(`/topics/${topic.id}/exams`).then((result) => result.exams.length).catch(() => 0),
-        ),
-      );
-      const countsMap: Record<number, number> = {};
-      topicsResult.topics.forEach((topic, index) => { countsMap[topic.id] = counts[index]; });
-      setExamCounts(countsMap);
+      setExamCounts(countsResult.counts);
     } catch (requestError) {
       handleAuthFailure(requestError);
       setError(messageFromError(requestError));
@@ -161,9 +158,9 @@ export function ExamsPage() {
   }, [load]);
 
   return (
-    <PageShell title="Exams" subtitle="Formal, timed, rubric-graded exams -- covering Bloom's Taxonomy, not just recall.">
+    <PageShell className="exams-page" title="Exams" subtitle="Formal, timed, rubric-graded exams -- covering Bloom's Taxonomy, not just recall.">
       {error && <p className="page-error" role="alert">{error}</p>}
-      {loading ? <div className="empty">Loading your topics…</div> : (
+      {loading ? <LoadingState label="Loading your exams…" /> : (
         <div className="deck-grid">
           {topics.map((topic) => (
             <article className="deck-card" key={topic.id}>
@@ -254,6 +251,7 @@ export function ExamTopicPage() {
     try {
       const result = await api<{ exam: Exam }>(`/topics/${topicId}/exams/generate`, {
         method: "POST",
+        headers: idempotencyHeader(),
         body: JSON.stringify({
           count: Number(data.get("count")) || 10,
           timeLimitMinutes: Number(data.get("timeLimitMinutes")) || 45,
@@ -286,6 +284,7 @@ export function ExamTopicPage() {
 
   return (
     <PageShell
+      className="exam-topic-page"
       title={topic?.title ?? "Exams"}
       subtitle="Generate a formal, timed exam, or pick up an existing one."
       action={<div className="page-actions">
@@ -322,14 +321,14 @@ export function ExamTopicPage() {
               </div>
             </article>
           ))}
-          {!exams.length && <div className="empty">No exams yet. Generate one from this topic's material.</div>}
+          {!exams.length && <div className="empty">No exams yet. Generate one from this topic&apos;s material.</div>}
         </div>
       )}
 
       {showGenerate && (
         <div className="modal-backdrop" onMouseDown={() => setShowGenerate(false)}>
           <form role="dialog" aria-modal="true" className="topic-modal action-modal quiz-generate-modal" onSubmit={generateExam} onMouseDown={(event) => event.stopPropagation()}>
-            <button type="button" className="modal-close" onClick={() => setShowGenerate(false)}><X size={20} /></button>
+            <button type="button" className="modal-close" aria-label="Close" onClick={() => setShowGenerate(false)}><X size={20} /></button>
             <div className="modal-icon edit-icon"><ClipboardCheck size={18} strokeWidth={1.8} /></div>
             <div className="eyebrow">GENERATE AN EXAM</div>
             <h2>Generate exam</h2>
@@ -346,7 +345,7 @@ export function ExamTopicPage() {
               </div>
             </label>
 
-            <label>Bloom's levels
+            <label>Bloom&apos;s levels
               <div className="quiz-type-checkboxes">
                 {ALL_BLOOMS_LEVELS.map((level) => (
                   <label className="check" key={level}>
@@ -373,7 +372,7 @@ export function ExamTopicPage() {
       {deletingExam && (
         <div className="modal-backdrop" onMouseDown={() => (deleting ? null : setDeletingExam(null))}>
           <div role="alertdialog" aria-modal="true" className="topic-modal action-modal delete-modal" onMouseDown={(event) => event.stopPropagation()}>
-            <button type="button" className="modal-close" disabled={deleting} onClick={() => setDeletingExam(null)}><X size={20} /></button>
+            <button type="button" className="modal-close" aria-label="Close" disabled={deleting} onClick={() => setDeletingExam(null)}><X size={20} /></button>
             <div className="modal-icon delete-icon"><Trash2 size={22} /></div>
             <div className="eyebrow">REMOVE THIS EXAM</div>
             <h2>Delete “{deletingExam.title}”?</h2>
@@ -411,6 +410,7 @@ function ExamQuestionRenderer({
           <button
             type="button" key={index}
             className={`quiz-choice${value.index === index ? " selected" : ""}`}
+            aria-pressed={value.index === index}
             disabled={disabled} onClick={() => onChange({ index })}
           >
             {choice}
@@ -426,6 +426,7 @@ function ExamQuestionRenderer({
           <button
             type="button" key={String(option)}
             className={`quiz-choice${value.value === option ? " selected" : ""}`}
+            aria-pressed={value.value === option}
             disabled={disabled} onClick={() => onChange({ value: option })}
           >
             {option ? "True" : "False"}
@@ -575,7 +576,7 @@ export function ExamTakePage() {
 
   if (!attemptId) {
     return (
-      <PageShell title={exam.title} subtitle="A formally timed sitting -- the clock starts the moment you begin." action={<Link className="back-topics" href={`/exams/topic?topicId=${exam.topicId}`}><ArrowLeft size={13} /> Back to exams</Link>}>
+      <PageShell className="exam-intro-page" title={exam.title} subtitle="A formally timed sitting -- the clock starts the moment you begin." action={<Link className="back-topics" href={`/exams/topic?topicId=${exam.topicId}`}><ArrowLeft size={13} /> Back to exams</Link>}>
         {error && <p className="page-error" role="alert">{error}</p>}
         <section className="notes-panel quiz-intro-panel">
           <div className="flashcard-summary-row">
@@ -599,9 +600,10 @@ export function ExamTakePage() {
 
   return (
     <PageShell
+      className="exam-session-page"
       title={exam.title}
       subtitle="Answer honestly -- essays and case studies are graded on your reasoning, not exact wording."
-      action={remainingSeconds != null ? <span className="quiz-timer exam-timer"><Clock size={14} /> {formatSeconds(remainingSeconds)}</span> : undefined}
+      action={remainingSeconds != null ? <span className="quiz-timer exam-timer" role="timer" aria-live="off" aria-label={`${remainingSeconds} seconds remaining`}><Clock size={14} /> {formatSeconds(remainingSeconds)}</span> : undefined}
     >
       {error && <p className="page-error" role="alert">{error}</p>}
       {currentQuestion && (
@@ -664,6 +666,7 @@ export function ExamResultsPage() {
 
   return (
     <PageShell
+      className="exam-results-page"
       title="Exam results"
       subtitle={results ? `${results.score}% overall` : "Loading your results…"}
       action={hasTopic ? <Link className="back-topics" href={`/exams/topic?topicId=${topicId}`}><ArrowLeft size={13} /> Back to exams</Link> : undefined}

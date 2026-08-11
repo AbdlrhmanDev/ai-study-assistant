@@ -38,7 +38,9 @@ async def test_get_graph_below_minimum_concepts_returns_empty(
     response = await authed_client.get(f"/api/v1/topics/{topic.id}/knowledge-graph")
 
     assert response.status_code == 200
-    assert response.json() == {"nodes": [], "edges": [], "belowMinimum": True}
+    body = response.json()
+    assert body["nodes"] == [] and body["edges"] == [] and body["belowMinimum"] is True
+    assert body["buildStatus"] == {"status": "completed", "errorMessage": None}
 
 
 async def test_rebuild_graph_creates_nodes_and_edges(
@@ -47,18 +49,24 @@ async def test_rebuild_graph_creates_nodes_and_edges(
     mock_ai_generate(MOCK_GRAPH_RESPONSE)
     topic = await _create_topic_with_note(db_session, test_user)
 
-    response = await authed_client.post(f"/api/v1/topics/{topic.id}/knowledge-graph/rebuild")
+    rebuild = await authed_client.post(f"/api/v1/topics/{topic.id}/knowledge-graph/rebuild")
+    assert rebuild.status_code == 202, rebuild.text
+    # No REDIS_URL in tests -> the rebuild runs inline before the response
+    # returns, so the status is already terminal.
+    assert rebuild.json()["status"] == "completed"
 
-    assert response.status_code == 201
+    response = await authed_client.get(f"/api/v1/topics/{topic.id}/knowledge-graph")
+    assert response.status_code == 200
     body = response.json()
     assert body["belowMinimum"] is False
     assert len(body["nodes"]) == 3
     assert len(body["edges"]) == 2
+    assert body["buildStatus"] == {"status": "completed", "errorMessage": None}
     names = {node["name"] for node in body["nodes"]}
     assert names == {"Chlorophyll", "Photosynthesis", "Chloroplast"}
 
 
-async def test_rebuild_graph_without_content_returns_422(
+async def test_rebuild_graph_without_content_returns_422_and_records_failed_status(
     authed_client: AsyncClient, db_session: AsyncSession, test_user: User, mock_ai_generate
 ):
     topic = Topic(user_id=test_user.id, title="Empty Topic", description=None)
@@ -68,6 +76,8 @@ async def test_rebuild_graph_without_content_returns_422(
     response = await authed_client.post(f"/api/v1/topics/{topic.id}/knowledge-graph/rebuild")
 
     assert response.status_code == 422
+    graph = await authed_client.get(f"/api/v1/topics/{topic.id}/knowledge-graph")
+    assert graph.json()["buildStatus"]["status"] == "failed"
 
 
 async def test_rebuild_graph_unowned_topic_returns_404(
@@ -85,8 +95,9 @@ async def test_get_concept_returns_detail(
 ):
     mock_ai_generate(MOCK_GRAPH_RESPONSE)
     topic = await _create_topic_with_note(db_session, test_user)
-    rebuilt = await authed_client.post(f"/api/v1/topics/{topic.id}/knowledge-graph/rebuild")
-    concept_id = rebuilt.json()["nodes"][0]["id"]
+    await authed_client.post(f"/api/v1/topics/{topic.id}/knowledge-graph/rebuild")
+    graph = await authed_client.get(f"/api/v1/topics/{topic.id}/knowledge-graph")
+    concept_id = graph.json()["nodes"][0]["id"]
 
     response = await authed_client.get(f"/api/v1/concepts/{concept_id}")
 

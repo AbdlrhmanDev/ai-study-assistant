@@ -108,6 +108,17 @@ async def get_document(document_id: int, db: DbSession, user: CurrentUser):
     return {"document": _serialize_document(document)}
 
 
+@router.post("/documents/{document_id}/retry", status_code=status.HTTP_202_ACCEPTED)
+async def retry_document(document_id: int, db: DbSession, user: CurrentUser):
+    document = await service.retry_document_index(db, document_id, user["id"])
+    return {"document": _serialize_document(document)}
+
+
+@router.get("/documents/{document_id}/download-url")
+async def document_download_url(document_id: int, db: DbSession, user: CurrentUser):
+    return {"url": await service.get_document_download_url(db, document_id, user["id"])}
+
+
 @router.delete("/documents/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_document(document_id: int, db: DbSession, user: CurrentUser):
     await service.delete_document(db, document_id, user["id"])

@@ -44,6 +44,12 @@ export default defineConfig(async () => {
   const { cloudflare } = await import("@cloudflare/vite-plugin");
 
   return {
+    // lucide-react preserves `use client` boundaries in its ESM output. If
+    // Vite pre-bundles it, the RSC plugin sees inconsistent client-module
+    // metadata between environments and warns on every icon import.
+    optimizeDeps: {
+      exclude: ["lucide-react"],
+    },
     server: isCodexSeatbeltSandbox
       ? { watch: { useFsEvents: false, usePolling: true } }
       : undefined,

@@ -3,27 +3,10 @@
 import Link from "next/link";
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import { Check, RefreshCw } from "lucide-react";
-import { PageShell, useAuthFailure } from "./BackendPages";
+import { PageShell, useAuthFailure } from "./shared/PageChrome";
+import { PlanTaskStatus, StudyPlan } from "./shared/dashboardShared";
 import { api, Topic, messageFromError } from "../lib/api";
-
-export type PlanTaskStatus = "pending" | "completed" | "skipped";
-
-export type PlanTask = {
-  id: number;
-  topicId: number;
-  conceptId: number | null;
-  title: string;
-  estimatedMinutes: number;
-  orderIndex: number;
-  status: PlanTaskStatus;
-};
-
-export type StudyPlan = {
-  id: number;
-  planDate: string;
-  narrative: string;
-  tasks: PlanTask[];
-};
+import { Badge, Button, EmptyState, LoadingState } from "./ui";
 
 type StudyGoal = { topicId: number; examDate: string | null; availableMinutesPerDay: number | null };
 
@@ -75,30 +58,25 @@ export function CoachPage() {
     setLoading(true);
     setError("");
     try {
-      const [planResult, topicsResult] = await Promise.all([
+      const [planResult, topicsResult, goalsResult, predictionsResult] = await Promise.all([
         api<StudyPlan>("/coach/plan/today"),
         api<{ topics: Topic[] }>("/topics"),
+        api<{ goals: StudyGoal[] }>("/coach/goals"),
+        api<{ predictions: GoalPrediction[] }>("/goal-predictions").catch(() => ({ predictions: [] })),
       ]);
       setPlan(planResult);
       setTopics(topicsResult.topics);
-      const goalEntries = await Promise.all(
-        topicsResult.topics.map((topic) =>
-          api<StudyGoal>(`/topics/${topic.id}/study-goal`).catch(() => null),
-        ),
-      );
       const goalMap: Record<number, StudyGoal> = {};
-      goalEntries.forEach((goal, index) => {
-        if (goal) goalMap[topicsResult.topics[index].id] = goal;
-      });
+      goalsResult.goals.forEach((goal) => { goalMap[goal.topicId] = goal; });
       setGoals(goalMap);
-      await loadPredictions();
+      setPredictions(predictionsResult.predictions);
     } catch (requestError) {
       handleAuthFailure(requestError);
       setError(messageFromError(requestError));
     } finally {
       setLoading(false);
     }
-  }, [handleAuthFailure, loadPredictions]);
+  }, [handleAuthFailure]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => void load(), 0);
@@ -171,13 +149,13 @@ export function CoachPage() {
       title="Study coach"
       subtitle="A ranked, time-boxed plan built from your weakest concepts and upcoming exams."
       action={
-        <button className="button button-secondary" disabled={regenerating} onClick={() => void regenerate()}>
+        <Button variant="secondary" disabled={regenerating} onClick={() => void regenerate()}>
           {regenerating ? "Regenerating…" : <><RefreshCw size={14} /> Regenerate plan</>}
-        </button>
+        </Button>
       }
     >
       {error && <p className="page-error" role="alert">{error}</p>}
-      {loading ? <div className="empty">Loading your plan…</div> : (
+      {loading ? <LoadingState label="Loading your plan…" /> : (
         <>
           <section className="notes-panel coach-plan-panel">
             <div className="section-head">
@@ -216,7 +194,7 @@ export function CoachPage() {
                 </div>
               ))}
               {!totalCount && (
-                <div className="empty">Nothing scheduled -- try a quiz or flashcard review to give the coach something to work with.</div>
+                <EmptyState compact title="Nothing scheduled today" description="Try a quiz or flashcard review to help the coach choose your next step." />
               )}
             </div>
           </section>
@@ -231,12 +209,12 @@ export function CoachPage() {
                   <span className="coach-goal-title">{topic.title}</span>
                   <label>Exam date<input type="date" name="examDate" defaultValue={goals[topic.id]?.examDate ?? ""} /></label>
                   <label>Minutes/day<input type="number" name="availableMinutesPerDay" min={5} max={600} defaultValue={goals[topic.id]?.availableMinutesPerDay ?? ""} placeholder="30" /></label>
-                  <button className="button button-secondary" type="submit" disabled={savingGoalFor === topic.id}>
+                  <Button variant="secondary" type="submit" disabled={savingGoalFor === topic.id}>
                     {savingGoalFor === topic.id ? "Saving…" : "Save"}
-                  </button>
+                  </Button>
                 </form>
               ))}
-              {!topics.length && <div className="empty">Create a topic first to set exam dates.</div>}
+              {!topics.length && <EmptyState compact title="No topics to schedule" description="Create a topic first to set an exam date and daily study time." />}
             </div>
           </section>
 
@@ -250,7 +228,7 @@ export function CoachPage() {
                   <div className="goal-prediction-row" key={prediction.topicId}>
                     <div className="goal-prediction-head">
                       <Link href={`/topic?id=${prediction.topicId}`}>{prediction.topicTitle}</Link>
-                      <span className={`goal-prediction-badge ${prediction.status}`}>{STATUS_LABELS[prediction.status]}</span>
+                      <Badge tone={prediction.status === "on_track" ? "success" : prediction.status === "at_risk" ? "warning" : prediction.status === "behind" ? "danger" : "neutral"}>{STATUS_LABELS[prediction.status]}</Badge>
                     </div>
                     {prediction.readiness !== null && (
                       <div className="weak-concept-bar-track">

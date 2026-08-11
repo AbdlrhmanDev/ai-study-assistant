@@ -10,6 +10,9 @@ python-multipart==0.0.20
 bcrypt==4.3.0
 slowapi==0.1.9
 redis==5.2.1
+boto3==1.40.6
+prometheus-client==0.22.1
+sentry-sdk[fastapi]==2.34.1
 structlog==24.4.0
 pgvector==0.3.6
 pypdf==5.6.1
@@ -20,3 +23,5 @@ groq==0.31.0
 httpx==0.28.1
 pytest==8.4.1
 pytest-asyncio==1.1.0
+moto[s3]==5.0.28
+fakeredis==2.31.3

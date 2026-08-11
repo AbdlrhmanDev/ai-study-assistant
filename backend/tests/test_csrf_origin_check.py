@@ -9,7 +9,33 @@ fixtures deliberately don't set up (see test_auth.py's module docstring).
 from starlette.requests import Request
 from starlette.responses import PlainTextResponse
 
+import pytest
+
+from app.core import security
 from app.core.security import SessionMiddleware, _cookie_name, get_settings
+
+
+class _FakeSessionContext:
+    async def __aenter__(self):
+        return object()
+
+    async def __aexit__(self, *_args):
+        return None
+
+
+@pytest.fixture(autouse=True)
+def _isolate_session_storage(monkeypatch):
+    """These are CSRF unit tests; session persistence is not under test."""
+    monkeypatch.setattr(security, "get_sessionmaker", lambda: _FakeSessionContext)
+    monkeypatch.setattr(
+        security.session_repository,
+        "get_active",
+        lambda *_args, **_kwargs: _async_none(),
+    )
+
+
+async def _async_none():
+    return None
 
 
 def _request(*, has_session_cookie: bool, origin: str | None, method: str = "POST") -> Request:

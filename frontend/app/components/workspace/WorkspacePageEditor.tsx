@@ -45,7 +45,6 @@ export function WorkspacePageEditor() {
     el?.scrollIntoView({ behavior: "smooth", block: "center" });
     // Driven by the URL hash on load -- a genuine external-system sync, not
     // derived render state.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     setHighlightedBlockId(id);
     const timer = window.setTimeout(() => setHighlightedBlockId(null), 2000);
     return () => window.clearTimeout(timer);
@@ -122,7 +121,7 @@ export function WorkspacePageEditor() {
 
   if (!editor.page) {
     return (
-      <main className="dashboard-shell">
+      <main className="dashboard-shell workspace-editor-page">
         <AppSidebar />
         <section className="dashboard-main">
           <div className="subpage-content">
@@ -136,7 +135,7 @@ export function WorkspacePageEditor() {
   const contextBlock = contextMenu ? findBlock(editor.blocks, contextMenu.blockId) : null;
 
   return (
-    <main className="dashboard-shell">
+    <main className="dashboard-shell workspace-editor-page">
       <AppSidebar />
       <section className="dashboard-main">
         <header className="dash-top">
@@ -144,8 +143,24 @@ export function WorkspacePageEditor() {
         </header>
         <div className="subpage-content">
           {editor.error && <p className="page-error" role="alert">{editor.error}</p>}
-          <div className="subpage-title">
-            <div style={{ flex: 1, minWidth: 0 }}>
+          {editor.conflict && (
+            <div className="workspace-conflict-banner" role="alert">
+              <p>
+                This page was changed elsewhere (last saved as “{editor.conflict.title}”). Reload to see that
+                version, or keep editing here to save your current changes over it.
+              </p>
+              <div className="workspace-conflict-actions">
+                <button type="button" className="button button-secondary" onClick={() => void editor.reloadFromServer()}>
+                  Reload latest version
+                </button>
+                <button type="button" className="button button-primary" onClick={editor.discardConflictAndRetry}>
+                  Keep editing here
+                </button>
+              </div>
+            </div>
+          )}
+          <div className="subpage-title workspace-editor-header">
+            <div className="workspace-editor-heading">
               <div className="section-kicker">WORKSPACE PAGE</div>
               <input
                 className="workspace-title-input"
@@ -155,8 +170,12 @@ export function WorkspacePageEditor() {
                 placeholder="Untitled page"
               />
               <div className="workspace-topic-link">
-                <span className={`workspace-save-status ${editor.saveStatus}`}>
-                  {editor.saveStatus === "saving" ? "Saving…" : editor.saveStatus === "saved" ? "Saved" : editor.saveStatus === "error" ? "Save failed" : ""}
+                <span className={`workspace-save-status ${editor.saveStatus}`} role="status">
+                  {editor.saveStatus === "saving" ? "Saving…"
+                    : editor.saveStatus === "saved" ? "Saved"
+                    : editor.saveStatus === "error" ? "Save failed -- retrying next edit"
+                    : editor.saveStatus === "conflict" ? "Not saved -- changed elsewhere"
+                    : ""}
                 </span>
                 <label>
                   Linked topic:{" "}
@@ -168,7 +187,7 @@ export function WorkspacePageEditor() {
               </div>
             </div>
             <div className="page-actions">
-              <button className="button button-secondary" onClick={() => setShowDeleteModal(true)}><Trash2 size={14} /> Delete page</button>
+              <button className="button button-secondary workspace-delete-page" onClick={() => setShowDeleteModal(true)}><Trash2 size={16} /> Delete page</button>
               <Link href="/workspace" className="back-topics">All pages</Link>
             </div>
           </div>
@@ -228,7 +247,7 @@ export function WorkspacePageEditor() {
       {showDeleteModal && (
         <div className="modal-backdrop" onMouseDown={() => (deleting ? null : setShowDeleteModal(false))}>
           <div role="alertdialog" aria-modal="true" aria-labelledby="delete-page-title" className="topic-modal action-modal delete-modal" onMouseDown={(event) => event.stopPropagation()}>
-            <button type="button" className="modal-close" disabled={deleting} onClick={() => setShowDeleteModal(false)}><X size={22} /></button>
+            <button type="button" className="modal-close" aria-label="Close" disabled={deleting} onClick={() => setShowDeleteModal(false)}><X size={22} /></button>
             <div className="modal-icon delete-icon"><Trash2 size={22} /></div>
             <div className="eyebrow">REMOVE THIS PAGE</div>
             <h2 id="delete-page-title">Delete “{editor.page.title}”?</h2>

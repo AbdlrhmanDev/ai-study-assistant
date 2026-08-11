@@ -1,9 +1,11 @@
+from datetime import datetime
+
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..ai import provider as ai_provider
 from ..topics import service as topics_service
 from . import repository
-from .exceptions import WorkspaceBlockNotFoundError, WorkspacePageNotFoundError
+from .exceptions import WorkspaceBlockNotFoundError, WorkspacePageConflictError, WorkspacePageNotFoundError
 from .model import WorkspacePage
 from .schema import LinkWorkspacePageTopic, WorkspacePageCreate, WorkspacePageUpdate
 
@@ -57,6 +59,21 @@ async def update_page(
     db: AsyncSession, page_id: int, user_id: int, payload: WorkspacePageUpdate
 ) -> WorkspacePage:
     page = await get_owned_page_or_404(db, page_id, user_id)
+    if payload.expectedUpdatedAt is not None:
+        # Compare parsed instants, not raw strings -- Pydantic's JSON
+        # serializer (what the client actually received and echoes back)
+        # renders a UTC offset as "Z", while Python's datetime.isoformat()
+        # renders it as "+00:00"; a string compare would false-positive on
+        # every single request.
+        try:
+            expected = datetime.fromisoformat(payload.expectedUpdatedAt.replace("Z", "+00:00"))
+        except ValueError:
+            expected = None
+        if expected != page.updated_at:
+            raise WorkspacePageConflictError({
+                "id": page.id, "title": page.title, "blocks": page.blocks,
+                "updatedAt": page.updated_at.isoformat(),
+            })
     blocks_dump = None
     if payload.blocks is not None:
         blocks_dump = [block.model_dump(mode="json") for block in payload.blocks]

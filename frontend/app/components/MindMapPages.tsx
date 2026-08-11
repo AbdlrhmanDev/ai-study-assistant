@@ -2,12 +2,16 @@
 
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { RefreshCw, Sparkles } from "lucide-react";
-import { PageShell, useAuthFailure } from "./BackendPages";
+import { MoveHorizontal, RefreshCw, Sparkles } from "lucide-react";
+import { PageShell, useAuthFailure } from "./shared/PageChrome";
 import { api, Topic, messageFromError } from "../lib/api";
 
 type MindMapNode = { title: string; children: MindMapNode[] };
-type MindMapData = { structure: MindMapNode | null; nodeCount: number; updatedAt: string | null };
+type BuildStatus = { status: "pending" | "processing" | "completed" | "failed"; errorMessage: string | null };
+type MindMapData = { structure: MindMapNode | null; nodeCount: number; updatedAt: string | null; buildStatus: BuildStatus };
+
+const BUILD_POLL_INTERVAL_MS = 1500;
+const BUILD_POLL_MAX_ATTEMPTS = 30;
 
 type PositionedNode = { node: MindMapNode; x: number; y: number; depth: number };
 
@@ -61,8 +65,26 @@ export function MindMapPage() {
   const [loading, setLoading] = useState(true);
   const [rebuilding, setRebuilding] = useState(false);
   const [error, setError] = useState("");
+  const [buildAnnouncement, setBuildAnnouncement] = useState("");
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  const pollUntilBuildSettled = useCallback(async () => {
+    for (let attempt = 0; attempt < BUILD_POLL_MAX_ATTEMPTS; attempt++) {
+      const result = await api<MindMapData>(`/topics/${topicId}/mind-map`);
+      setMindMap(result);
+      if (result.buildStatus.status === "completed") {
+        setBuildAnnouncement("Mind map generated.");
+        return;
+      }
+      if (result.buildStatus.status === "failed") {
+        setError(result.buildStatus.errorMessage || "Generating the mind map failed.");
+        setBuildAnnouncement("Mind map generation failed.");
+        return;
+      }
+      await new Promise((resolve) => window.setTimeout(resolve, BUILD_POLL_INTERVAL_MS));
+    }
+  }, [topicId]);
 
   const load = useCallback(async () => {
     if (!Number.isInteger(topicId) || topicId < 1) return;
@@ -75,13 +97,18 @@ export function MindMapPage() {
       ]);
       setTopic(topicResult.topic);
       setMindMap(mapResult);
+      setLoading(false);
+      if (mapResult.buildStatus.status === "pending" || mapResult.buildStatus.status === "processing") {
+        setRebuilding(true);
+        await pollUntilBuildSettled();
+        setRebuilding(false);
+      }
     } catch (requestError) {
       handleAuthFailure(requestError);
       setError(messageFromError(requestError));
-    } finally {
       setLoading(false);
     }
-  }, [handleAuthFailure, topicId]);
+  }, [handleAuthFailure, pollUntilBuildSettled, topicId]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => void load(), 0);
@@ -93,8 +120,8 @@ export function MindMapPage() {
     setRebuilding(true);
     setError("");
     try {
-      const result = await api<MindMapData>(`/topics/${topicId}/mind-map/rebuild`, { method: "POST" });
-      setMindMap(result);
+      await api<BuildStatus>(`/topics/${topicId}/mind-map/rebuild`, { method: "POST" });
+      await pollUntilBuildSettled();
     } catch (requestError) {
       setError(messageFromError(requestError));
     } finally {
@@ -175,6 +202,7 @@ export function MindMapPage() {
 
   return (
     <PageShell
+      className="mind-map-page"
       title="Mind map"
       subtitle="A visual outline of this topic, generated from your notes and documents."
       action={
@@ -184,6 +212,7 @@ export function MindMapPage() {
       }
     >
       {error && <p className="page-error" role="alert">{error}</p>}
+      <p className="sr-only" aria-live="polite">{rebuilding ? "Generating mind map…" : buildAnnouncement}</p>
       {loading ? (
         <div className="empty">Loading…</div>
       ) : !mindMap?.structure ? (
@@ -194,6 +223,7 @@ export function MindMapPage() {
         </div>
       ) : (
         <div className="mind-map-canvas-panel">
+          <div className="mind-map-pan-hint"><MoveHorizontal size={16} aria-hidden="true" /> Swipe to explore the map</div>
           <canvas ref={canvasRef} className="mind-map-canvas" />
         </div>
       )}

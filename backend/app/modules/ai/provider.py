@@ -1,12 +1,16 @@
 import asyncio
 import base64
+import time
 from functools import partial
 
+import structlog
 from fastapi.concurrency import run_in_threadpool
 
 from ...core.config import get_settings
 from ...core.exceptions import AppError
 from .retrieval import RetrievedChunk
+
+logger = structlog.get_logger("study_assistant")
 
 IMAGE_CHAT_INSTRUCTIONS = """You are a careful study tutor helping a student understand an image they've shared
 (e.g. a photo of a textbook page, diagram, or handwritten problem). Look carefully at the image and answer the
@@ -100,13 +104,19 @@ def _is_rate_limit_error(error: Exception) -> bool:
     return status_code == 429 or type(error).__name__ == "RateLimitError"
 
 
-async def _run_provider_with_retry(call) -> tuple[str, str, str]:
+async def _run_provider_with_retry(call, counters: dict | None = None) -> tuple[str, str, str]:
+    """`counters` (optional, mutated in place) lets callers that need
+    accurate retry/fallback counts for usage metering get them without
+    changing this function's return shape -- existing direct unit tests
+    call it without `counters` and are unaffected."""
     for attempt in range(PROVIDER_MAX_ATTEMPTS):
         try:
             return await run_in_threadpool(call)
         except Exception as error:
             if attempt == PROVIDER_MAX_ATTEMPTS - 1 or not _is_retryable_provider_error(error):
                 raise
+            if counters is not None:
+                counters["retries"] = counters.get("retries", 0) + 1
             await asyncio.sleep(PROVIDER_RETRY_DELAYS[attempt])
     raise RuntimeError("AI provider retry loop exited unexpectedly")
 
@@ -124,15 +134,17 @@ def _available_providers() -> list[str]:
     ]
 
 
-async def _run_provider_with_fallback(call_factory) -> tuple[str, str, str]:
+async def _run_provider_with_fallback(call_factory, counters: dict | None = None) -> tuple[str, str, str]:
     last_error: Exception | None = None
     failures: list[Exception] = []
     for provider_name in _available_providers():
         try:
-            return await _run_provider_with_retry(call_factory(provider_name))
+            return await _run_provider_with_retry(call_factory(provider_name), counters)
         except Exception as error:
             last_error = error
             failures.append(error)
+            if counters is not None:
+                counters["fallbacks"] = counters.get("fallbacks", 0) + 1
             if not _is_transient_provider_error(error):
                 raise
     assert last_error is not None
@@ -247,10 +259,48 @@ def _generate_sync(instructions: str, prompt: str, provider_name: str | None = N
     return response.text or "", "gemini", settings.gemini_model
 
 
-async def generate(prompt: str, instructions: str = INSTRUCTIONS) -> tuple[str, str, str]:
-    return await _run_provider_with_fallback(
-        lambda provider_name: partial(_generate_sync, instructions, prompt, provider_name)
+async def generate(prompt: str, instructions: str = INSTRUCTIONS, feature: str | None = None) -> tuple[str, str, str]:
+    from ..usage import service as usage_service
+    from ...core.metrics import AI_LATENCY, AI_REQUESTS
+    await usage_service.enforce_quota(feature)
+    started = time.perf_counter()
+    counters: dict = {}
+    try:
+        result = await _run_provider_with_fallback(
+            lambda provider_name: partial(_generate_sync, instructions, prompt, provider_name), counters,
+        )
+    except Exception:
+        latency = time.perf_counter() - started
+        settings = get_settings()
+        AI_REQUESTS.labels(settings.ai_provider, "unknown", "failed").inc()
+        await usage_service.record(
+            provider=settings.ai_provider, model="unknown", prompt=prompt, output="",
+            latency_ms=round(latency * 1000), retries=counters.get("retries", 0),
+            fallbacks=counters.get("fallbacks", 0), outcome="failed", feature=feature,
+        )
+        # Provider/model attribution and latency only -- never the prompt or
+        # response text, which can contain private notes/documents.
+        logger.warning(
+            "ai_provider_call", feature=feature, provider=settings.ai_provider,
+            latency_ms=round(latency * 1000), retries=counters.get("retries", 0),
+            fallbacks=counters.get("fallbacks", 0), outcome="failed",
+        )
+        raise
+    answer, provider_name, model_name = result
+    latency = time.perf_counter() - started
+    AI_REQUESTS.labels(provider_name, model_name, "success").inc()
+    AI_LATENCY.labels(provider_name, model_name).observe(latency)
+    await usage_service.record(
+        provider=provider_name, model=model_name, prompt=prompt, output=answer,
+        latency_ms=round(latency * 1000), retries=counters.get("retries", 0),
+        fallbacks=counters.get("fallbacks", 0), feature=feature,
     )
+    logger.info(
+        "ai_provider_call", feature=feature, provider=provider_name, model=model_name,
+        latency_ms=round(latency * 1000), retries=counters.get("retries", 0),
+        fallbacks=counters.get("fallbacks", 0), outcome="success",
+    )
+    return result
 
 
 def build_image_input(
@@ -325,8 +375,50 @@ def _generate_with_image_sync(
 async def generate_with_image(
     prompt: str, image_bytes: bytes, mime_type: str, instructions: str = IMAGE_CHAT_INSTRUCTIONS
 ) -> tuple[str, str, str]:
-    return await _run_provider_with_fallback(
-        lambda provider_name: partial(
-            _generate_with_image_sync, instructions, prompt, image_bytes, mime_type, provider_name
+    from ..usage import service as usage_service
+    from ...core.metrics import AI_LATENCY, AI_REQUESTS
+    # Explicit feature="image_chat": both this and text chat live in
+    # ai/service.py, so stack-based feature inference (usage/service.py's
+    # `infer_feature`) can't tell them apart on its own.
+    await usage_service.enforce_quota("image_chat")
+    started = time.perf_counter()
+    counters: dict = {}
+    try:
+        result = await _run_provider_with_fallback(
+            lambda provider_name: partial(
+                _generate_with_image_sync, instructions, prompt, image_bytes, mime_type, provider_name
+            ),
+            counters,
         )
+    except Exception:
+        latency = time.perf_counter() - started
+        settings = get_settings()
+        AI_REQUESTS.labels(settings.ai_provider, "unknown", "failed").inc()
+        await usage_service.record(
+            provider=settings.ai_provider, model="unknown", prompt=prompt, output="",
+            latency_ms=round(latency * 1000), image_bytes=len(image_bytes),
+            retries=counters.get("retries", 0), fallbacks=counters.get("fallbacks", 0),
+            outcome="failed", feature="image_chat",
+        )
+        logger.warning(
+            "ai_provider_call", feature="image_chat", provider=settings.ai_provider,
+            latency_ms=round(latency * 1000), retries=counters.get("retries", 0),
+            fallbacks=counters.get("fallbacks", 0), outcome="failed",
+        )
+        raise
+    answer, provider_name, model_name = result
+    latency = time.perf_counter() - started
+    AI_REQUESTS.labels(provider_name, model_name, "success").inc()
+    AI_LATENCY.labels(provider_name, model_name).observe(latency)
+    await usage_service.record(
+        provider=provider_name, model=model_name, prompt=prompt, output=answer,
+        latency_ms=round(latency * 1000), image_bytes=len(image_bytes),
+        retries=counters.get("retries", 0), fallbacks=counters.get("fallbacks", 0),
+        feature="image_chat",
     )
+    logger.info(
+        "ai_provider_call", feature="image_chat", provider=provider_name, model=model_name,
+        latency_ms=round(latency * 1000), retries=counters.get("retries", 0),
+        fallbacks=counters.get("fallbacks", 0), outcome="success",
+    )
+    return result

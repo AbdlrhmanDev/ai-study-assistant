@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, messageFromError, Topic } from "../../lib/api";
+import { api, ApiError, messageFromError, Topic } from "../../lib/api";
 import {
   duplicateBlock,
   findBlock,
@@ -16,7 +16,8 @@ import {
 } from "./blockTree";
 import { BlockProperties, BlockType, WorkspaceBlock, WorkspacePage, makeBlock } from "./types";
 
-export type SaveStatus = "idle" | "saving" | "saved" | "error";
+export type SaveStatus = "idle" | "saving" | "saved" | "error" | "conflict";
+export type WorkspaceConflict = { title: string; blocks: WorkspaceBlock[]; updatedAt: string };
 
 export function useWorkspaceEditor(pageId: number) {
   const [page, setPage] = useState<WorkspacePage | null>(null);
@@ -25,11 +26,17 @@ export function useWorkspaceEditor(pageId: number) {
   const [blocks, setBlocks] = useState<WorkspaceBlock[]>([]);
   const [error, setError] = useState("");
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
+  const [conflict, setConflict] = useState<WorkspaceConflict | null>(null);
   const [collapsedIds, setCollapsedIds] = useState<Set<string>>(new Set());
   const [focusRequest, setFocusRequest] = useState<{ id: string; caret: "start" | "end" } | null>(null);
 
   const saveTimer = useRef<number | null>(null);
   const blocksRef = useRef<WorkspaceBlock[]>([]);
+  // Opaque token from the server, echoed back verbatim on every save so it
+  // can detect a write from another tab/device that happened in between --
+  // never parsed/reformatted client-side (see backend workspace/service.py
+  // for why an exact string round-trip matters).
+  const lastKnownUpdatedAtRef = useRef<string | null>(null);
   // Keep the ref in sync after every render (not during render, which
   // eslint's react-hooks rules disallow). The one case that matters most --
   // two block actions called back-to-back in the same event-handler tick --
@@ -39,6 +46,49 @@ export function useWorkspaceEditor(pageId: number) {
   useEffect(() => {
     blocksRef.current = blocks;
   });
+
+  const persist = useCallback(
+    async (nextTitle: string | undefined, nextBlocks: WorkspaceBlock[] | undefined) => {
+      if (!Number.isInteger(pageId) || pageId < 1) return;
+      setSaveStatus("saving");
+      try {
+        const payload: Record<string, unknown> = {};
+        if (nextTitle !== undefined) payload.title = nextTitle;
+        if (nextBlocks !== undefined) payload.blocks = nextBlocks;
+        if (lastKnownUpdatedAtRef.current) payload.expectedUpdatedAt = lastKnownUpdatedAtRef.current;
+        const result = await api<{ page: WorkspacePage }>(`/workspace-pages/${pageId}`, {
+          method: "PATCH",
+          body: JSON.stringify(payload),
+        });
+        lastKnownUpdatedAtRef.current = result.page.updated_at;
+        setSaveStatus("saved");
+      } catch (requestError) {
+        if (requestError instanceof ApiError && requestError.status === 409) {
+          // Someone/something else (another tab, another device) saved
+          // this page since we last synced -- stop silently overwriting
+          // their work. Surface it; the editor UI decides how to let the
+          // user reconcile (reload theirs, or keep editing and retry).
+          const details = requestError.details as { current?: WorkspaceConflict } | undefined;
+          if (details?.current) setConflict(details.current);
+          setSaveStatus("conflict");
+          return;
+        }
+        setSaveStatus("error");
+      }
+    },
+    [pageId],
+  );
+
+  const reloadFromServer = useCallback(async () => {
+    const result = await api<{ page: WorkspacePage }>(`/workspace-pages/${pageId}`);
+    lastKnownUpdatedAtRef.current = result.page.updated_at;
+    setPage(result.page);
+    setTitle(result.page.title);
+    blocksRef.current = result.page.blocks;
+    setBlocks(result.page.blocks);
+    setConflict(null);
+    setSaveStatus("idle");
+  }, [pageId]);
 
   const load = useCallback(async () => {
     if (!Number.isInteger(pageId) || pageId < 1) return;
@@ -50,6 +100,7 @@ export function useWorkspaceEditor(pageId: number) {
       setPage(pageResult.page);
       setTitle(pageResult.page.title);
       setTopics(topicsResult.topics);
+      lastKnownUpdatedAtRef.current = pageResult.page.updated_at;
       if (pageResult.page.blocks.length === 0) {
         // A page always has at least one block to type into -- seed one
         // empty text block instead of showing an empty state with a
@@ -66,32 +117,12 @@ export function useWorkspaceEditor(pageId: number) {
     } catch (requestError) {
       setError(messageFromError(requestError));
     }
-  }, [pageId]);
+  }, [pageId, persist]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => void load(), 0);
     return () => window.clearTimeout(timer);
   }, [load]);
-
-  const persist = useCallback(
-    async (nextTitle: string | undefined, nextBlocks: WorkspaceBlock[] | undefined) => {
-      if (!Number.isInteger(pageId) || pageId < 1) return;
-      setSaveStatus("saving");
-      try {
-        const payload: Record<string, unknown> = {};
-        if (nextTitle !== undefined) payload.title = nextTitle;
-        if (nextBlocks !== undefined) payload.blocks = nextBlocks;
-        await api<{ page: WorkspacePage }>(`/workspace-pages/${pageId}`, {
-          method: "PATCH",
-          body: JSON.stringify(payload),
-        });
-        setSaveStatus("saved");
-      } catch {
-        setSaveStatus("error");
-      }
-    },
-    [pageId],
-  );
 
   const scheduleSave = useCallback(
     (nextTitle?: string, nextBlocks?: WorkspaceBlock[]) => {
@@ -100,6 +131,15 @@ export function useWorkspaceEditor(pageId: number) {
     },
     [persist],
   );
+
+  const discardConflictAndRetry = useCallback(() => {
+    // Keep editing here, but adopt the server's updatedAt so the very next
+    // save is evaluated against what's actually current instead of
+    // repeating the same conflict.
+    if (conflict) lastKnownUpdatedAtRef.current = conflict.updatedAt;
+    setConflict(null);
+    scheduleSave(title, blocksRef.current);
+  }, [conflict, title, scheduleSave]);
 
   const setTitleValue = useCallback(
     (value: string) => {
@@ -297,6 +337,9 @@ export function useWorkspaceEditor(pageId: number) {
     blocks,
     error,
     saveStatus,
+    conflict,
+    reloadFromServer,
+    discardConflictAndRetry,
     collapsedIds,
     focusRequest,
     setTitleValue,

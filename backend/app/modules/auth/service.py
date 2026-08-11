@@ -9,7 +9,10 @@ from ..users.model import User
 
 
 def _to_session_user(user: User) -> dict:
-    return {"id": user.id, "name": user.name, "email": user.email}
+    # Keep the session payload identical to the public auth response. This
+    # prevents profile-aware clients from seeing a different user shape
+    # immediately after register, login, or profile updates.
+    return users_service.public_user(user)
 
 
 async def register(
@@ -19,7 +22,7 @@ async def register(
     session_user = _to_session_user(user)
     regenerate_session(request)
     request.session["user"] = session_user
-    return session_user
+    return users_service.public_user(user)
 
 
 async def login(db: AsyncSession, request: Request, *, email: str, password: str) -> dict:
@@ -31,7 +34,7 @@ async def login(db: AsyncSession, request: Request, *, email: str, password: str
     session_user = _to_session_user(user)
     regenerate_session(request)
     request.session["user"] = session_user
-    return session_user
+    return users_service.public_user(user)
 
 
 def logout(request: Request) -> None:
@@ -49,4 +52,11 @@ async def update_profile(
     user = await users_service.update_profile(db, user_id, name=name, email=email)
     session_user = _to_session_user(user)
     request.session["user"] = session_user
-    return session_user
+    return users_service.public_user(user)
+
+
+async def get_profile(db: AsyncSession, user_id: int) -> dict:
+    user = await users_repository.get_by_id(db, user_id)
+    if user is None:
+        return {}
+    return users_service.public_user(user)

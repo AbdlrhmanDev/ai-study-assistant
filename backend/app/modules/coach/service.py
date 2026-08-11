@@ -77,6 +77,10 @@ def _serialize_goal(goal: StudyGoal) -> dict:
     }
 
 
+def serialize_goal(goal: StudyGoal) -> dict:
+    return _serialize_goal(goal)
+
+
 async def get_study_goal(db: AsyncSession, topic_id: int, user_id: int) -> dict:
     await topics_service.get_owned_topic_or_404(db, topic_id, user_id)
     goal = await repository.get_study_goal(db, user_id, topic_id)

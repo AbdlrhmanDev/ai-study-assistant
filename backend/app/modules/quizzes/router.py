@@ -1,6 +1,7 @@
-from fastapi import APIRouter, status
+from fastapi import APIRouter, Header, status
 
 from ...api.dependencies import CurrentUser, DbSession
+from ...core.idempotency import with_idempotency
 from ...shared.responses import no_content
 from . import service
 from .model import Quiz, QuizQuestion
@@ -26,6 +27,12 @@ def _serialize_question_for_taking(entry: tuple[QuizQuestion, str | None, str | 
     }
 
 
+@router.get("/quizzes/counts-by-topic")
+async def count_quizzes_by_topic(db: DbSession, user: CurrentUser):
+    counts = await service.count_quizzes_by_topic(db, user["id"])
+    return {"counts": counts}
+
+
 @router.get("/topics/{topic_id}/quizzes")
 async def list_quizzes(topic_id: int, db: DbSession, user: CurrentUser):
     entries = await service.list_quizzes(db, topic_id, user["id"])
@@ -42,12 +49,18 @@ async def list_quizzes(topic_id: int, db: DbSession, user: CurrentUser):
 
 
 @router.post("/topics/{topic_id}/quizzes/generate", status_code=status.HTTP_201_CREATED)
-async def generate_quiz(topic_id: int, payload: QuizGenerate, db: DbSession, user: CurrentUser):
-    quiz, questions = await service.generate_quiz(db, topic_id, user["id"], payload)
-    return {
-        "quiz": _serialize_quiz(quiz),
-        "questions": [_serialize_question_for_taking(entry) for entry in questions],
-    }
+async def generate_quiz(
+    topic_id: int, payload: QuizGenerate, db: DbSession, user: CurrentUser,
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
+):
+    async def _compute() -> dict:
+        quiz, questions = await service.generate_quiz(db, topic_id, user["id"], payload)
+        return {
+            "quiz": _serialize_quiz(quiz),
+            "questions": [_serialize_question_for_taking(entry) for entry in questions],
+        }
+
+    return await with_idempotency(user["id"], "quiz_generate", idempotency_key, _compute)
 
 
 @router.get("/quizzes/{quiz_id}")

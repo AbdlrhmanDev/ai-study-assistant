@@ -4,12 +4,16 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, RefreshCw, Search, Sparkles } from "lucide-react";
-import { PageShell, useAuthFailure } from "./BackendPages";
+import { PageShell, useAuthFailure } from "./shared/PageChrome";
 import { api, Topic, messageFromError } from "../lib/api";
 
 type GraphNode = { id: number; name: string; description: string; masteryScore: number; size: number };
 type GraphEdge = { from: number; to: number; type: string; weight: number };
-type GraphData = { nodes: GraphNode[]; edges: GraphEdge[]; belowMinimum: boolean };
+type BuildStatus = { status: "pending" | "processing" | "completed" | "failed"; errorMessage: string | null };
+type GraphData = { nodes: GraphNode[]; edges: GraphEdge[]; belowMinimum: boolean; buildStatus: BuildStatus };
+
+const BUILD_POLL_INTERVAL_MS = 1500;
+const BUILD_POLL_MAX_ATTEMPTS = 30;
 type ConceptDetail = { id: number; topicId: number; name: string; description: string; masteryScore: number };
 
 type LayoutPoint = { x: number; y: number; vx: number; vy: number };
@@ -112,6 +116,7 @@ export function KnowledgeGraphPage() {
   const params = useSearchParams();
   const handleAuthFailure = useAuthFailure();
   const topicId = Number(params.get("topicId"));
+  const embedded = params.get("embedded") === "1";
 
   const [topic, setTopic] = useState<Topic | null>(null);
   const [graph, setGraph] = useState<GraphData | null>(null);
@@ -121,12 +126,50 @@ export function KnowledgeGraphPage() {
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
   const [conceptDetail, setConceptDetail] = useState<ConceptDetail | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
+  const [buildAnnouncement, setBuildAnnouncement] = useState("");
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const canvasViewportRef = useRef<HTMLDivElement>(null);
+  const detailPanelRef = useRef<HTMLElement>(null);
   const positionsRef = useRef<Map<number, LayoutPoint>>(new Map());
   const transformRef = useRef({ offsetX: 0, offsetY: 0, scale: 1 });
-  const dragRef = useRef<{ mode: "pan" | "node"; nodeId?: number; lastX: number; lastY: number } | null>(null);
-  const [, forceRedraw] = useState(0);
+  const dragRef = useRef<{
+    mode: "pan" | "node";
+    nodeId?: number;
+    lastX: number;
+    lastY: number;
+    startClientX: number;
+    startClientY: number;
+    moved: boolean;
+  } | null>(null);
+
+  function askTutorAboutConcept(concept: string) {
+    if (embedded && window.parent !== window) {
+      window.parent.postMessage({ type: "studia:set-topic-tool", tool: "tutor", concept }, window.location.origin);
+      return;
+    }
+    window.location.assign(`/ai-tutor?topicId=${topicId}&concept=${encodeURIComponent(concept)}`);
+  }
+
+  const pollUntilBuildSettled = useCallback(async () => {
+    for (let attempt = 0; attempt < BUILD_POLL_MAX_ATTEMPTS; attempt++) {
+      const result = await api<GraphData>(`/topics/${topicId}/knowledge-graph`);
+      setGraph(result);
+      if (result.nodes.length) {
+        positionsRef.current = computeLayout(result.nodes, result.edges);
+      }
+      if (result.buildStatus.status === "completed") {
+        setBuildAnnouncement("Knowledge graph rebuilt.");
+        return;
+      }
+      if (result.buildStatus.status === "failed") {
+        setError(result.buildStatus.errorMessage || "Rebuilding the knowledge graph failed.");
+        setBuildAnnouncement("Knowledge graph rebuild failed.");
+        return;
+      }
+      await new Promise((resolve) => window.setTimeout(resolve, BUILD_POLL_INTERVAL_MS));
+    }
+  }, [topicId]);
 
   const load = useCallback(async () => {
     if (!Number.isInteger(topicId) || topicId < 1) return;
@@ -142,13 +185,21 @@ export function KnowledgeGraphPage() {
       if (graphResult.nodes.length) {
         positionsRef.current = computeLayout(graphResult.nodes, graphResult.edges);
       }
+      setLoading(false);
+      // A rebuild was still in flight when this page was last left (or a
+      // teammate triggered one) -- keep watching it instead of showing a
+      // stale/incomplete graph as if nothing were happening.
+      if (graphResult.buildStatus.status === "pending" || graphResult.buildStatus.status === "processing") {
+        setRebuilding(true);
+        await pollUntilBuildSettled();
+        setRebuilding(false);
+      }
     } catch (requestError) {
       handleAuthFailure(requestError);
       setError(messageFromError(requestError));
-    } finally {
       setLoading(false);
     }
-  }, [handleAuthFailure, topicId]);
+  }, [handleAuthFailure, pollUntilBuildSettled, topicId]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => void load(), 0);
@@ -159,14 +210,15 @@ export function KnowledgeGraphPage() {
     if (!Number.isInteger(topicId) || topicId < 1 || rebuilding) return;
     setRebuilding(true);
     setError("");
+    setSelectedNode(null);
+    setConceptDetail(null);
     try {
-      const result = await api<GraphData>(`/topics/${topicId}/knowledge-graph/rebuild`, { method: "POST" });
-      setGraph(result);
-      setSelectedNode(null);
-      setConceptDetail(null);
-      if (result.nodes.length) {
-        positionsRef.current = computeLayout(result.nodes, result.edges);
-      }
+      // Kicks off an async rebuild (202): without Redis configured it
+      // finishes before this call returns, so the very first poll below
+      // usually already sees the final status; in production it can take
+      // longer, hence the poll loop.
+      await api<BuildStatus>(`/topics/${topicId}/knowledge-graph/rebuild`, { method: "POST" });
+      await pollUntilBuildSettled();
     } catch (requestError) {
       setError(messageFromError(requestError));
     } finally {
@@ -190,6 +242,14 @@ export function KnowledgeGraphPage() {
   async function openConcept(node: GraphNode) {
     setSelectedNode(node);
     setConceptDetail(null);
+    if (window.matchMedia("(max-width: 47.99rem)").matches) {
+      window.requestAnimationFrame(() => {
+        detailPanelRef.current?.scrollIntoView({
+          behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
+          block: "nearest",
+        });
+      });
+    }
     try {
       const result = await api<ConceptDetail>(`/concepts/${node.id}`);
       setConceptDetail(result);
@@ -250,7 +310,7 @@ export function KnowledgeGraphPage() {
 
       ctx.globalAlpha = dimmed ? 0.35 : 1;
       ctx.fillStyle = "#1b1a1f";
-      ctx.font = "600 12px -apple-system, BlinkMacSystemFont, sans-serif";
+      ctx.font = "650 14px Inter, -apple-system, BlinkMacSystemFont, sans-serif";
       ctx.textAlign = "center";
       ctx.textBaseline = "top";
       ctx.fillText(node.name, pos.x, pos.y + radius + 6);
@@ -263,7 +323,7 @@ export function KnowledgeGraphPage() {
     draw();
   }, [draw]);
 
-  function canvasPointFromEvent(event: React.MouseEvent<HTMLCanvasElement>): { x: number; y: number } {
+  function canvasPointFromEvent(event: { clientX: number; clientY: number }): { x: number; y: number } {
     const canvas = canvasRef.current!;
     const rect = canvas.getBoundingClientRect();
     const { offsetX, offsetY, scale } = transformRef.current;
@@ -283,19 +343,29 @@ export function KnowledgeGraphPage() {
     return null;
   }
 
-  function handleMouseDown(event: React.MouseEvent<HTMLCanvasElement>) {
+  function handlePointerDown(event: React.PointerEvent<HTMLCanvasElement>) {
+    event.currentTarget.setPointerCapture(event.pointerId);
     const point = canvasPointFromEvent(event);
     const node = findNodeAt(point.x, point.y);
     if (node) {
-      dragRef.current = { mode: "node", nodeId: node.id, lastX: point.x, lastY: point.y };
+      dragRef.current = {
+        mode: "node", nodeId: node.id, lastX: point.x, lastY: point.y,
+        startClientX: event.clientX, startClientY: event.clientY, moved: false,
+      };
     } else {
-      dragRef.current = { mode: "pan", lastX: event.clientX, lastY: event.clientY };
+      dragRef.current = {
+        mode: "pan", lastX: event.clientX, lastY: event.clientY,
+        startClientX: event.clientX, startClientY: event.clientY, moved: false,
+      };
     }
   }
 
-  function handleMouseMove(event: React.MouseEvent<HTMLCanvasElement>) {
+  function handlePointerMove(event: React.PointerEvent<HTMLCanvasElement>) {
     const drag = dragRef.current;
     if (!drag) return;
+    const movement = Math.hypot(event.clientX - drag.startClientX, event.clientY - drag.startClientY);
+    if (!drag.moved && movement < 7) return;
+    drag.moved = true;
     if (drag.mode === "node" && drag.nodeId != null) {
       const point = canvasPointFromEvent(event);
       const pos = positionsRef.current.get(drag.nodeId);
@@ -305,8 +375,9 @@ export function KnowledgeGraphPage() {
       }
       draw();
     } else if (drag.mode === "pan") {
-      const dx = event.clientX - drag.lastX;
-      const dy = event.clientY - drag.lastY;
+      const rect = event.currentTarget.getBoundingClientRect();
+      const dx = (event.clientX - drag.lastX) * (event.currentTarget.width / rect.width);
+      const dy = (event.clientY - drag.lastY) * (event.currentTarget.height / rect.height);
       transformRef.current.offsetX += dx;
       transformRef.current.offsetY += dy;
       drag.lastX = event.clientX;
@@ -315,16 +386,47 @@ export function KnowledgeGraphPage() {
     }
   }
 
-  function handleMouseUp(event: React.MouseEvent<HTMLCanvasElement>) {
+  function handlePointerUp(event: React.PointerEvent<HTMLCanvasElement>) {
     const drag = dragRef.current;
-    if (drag?.mode === "node" && drag.nodeId != null) {
-      const moved = Math.abs(canvasPointFromEvent(event).x - drag.lastX) > 2 || Math.abs(canvasPointFromEvent(event).y - drag.lastY) > 2;
-      if (!moved) {
-        const node = graph?.nodes.find((item) => item.id === drag.nodeId);
-        if (node) void openConcept(node);
-      }
+    if (drag?.mode === "node" && drag.nodeId != null && !drag.moved) {
+      const node = graph?.nodes.find((item) => item.id === drag.nodeId);
+      if (node) void openConcept(node);
     }
     dragRef.current = null;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+  }
+
+  const resetView = useCallback(() => {
+    const canvas = canvasRef.current;
+    const viewport = canvasViewportRef.current;
+    if (!canvas || !viewport) return;
+    const rect = canvas.getBoundingClientRect();
+    const visibleWidth = viewport.clientWidth * (canvas.width / rect.width);
+    const visibleHeight = viewport.clientHeight * (canvas.height / rect.height);
+    const scale = window.matchMedia("(max-width: 47.99rem)").matches ? 0.9 : 1;
+    transformRef.current = {
+      scale,
+      offsetX: visibleWidth / 2 - (CANVAS_WIDTH / 2) * scale,
+      offsetY: visibleHeight / 2 - (CANVAS_HEIGHT / 2) * scale,
+    };
+    draw();
+  }, [draw]);
+
+  useEffect(() => {
+    if (!graph?.nodes.length) return;
+    const frame = window.requestAnimationFrame(resetView);
+    window.addEventListener("resize", resetView);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.removeEventListener("resize", resetView);
+    };
+  }, [graph?.nodes.length, resetView]);
+
+  function changeZoom(amount: number) {
+    transformRef.current.scale = Math.max(0.55, Math.min(2.5, transformRef.current.scale + amount));
+    draw();
   }
 
   function handleWheel(event: React.WheelEvent<HTMLCanvasElement>) {
@@ -336,6 +438,7 @@ export function KnowledgeGraphPage() {
 
   return (
     <PageShell
+      className="knowledge-graph-page"
       title={topic ? `${topic.title}: Knowledge Graph` : "Knowledge Graph"}
       subtitle="How the concepts in this topic connect -- weak concepts stay visually prominent."
       action={<div className="page-actions">
@@ -346,6 +449,7 @@ export function KnowledgeGraphPage() {
       </div>}
     >
       {error && <p className="page-error" role="alert">{error}</p>}
+      <p className="sr-only" aria-live="polite">{rebuilding ? "Rebuilding knowledge graph…" : buildAnnouncement}</p>
       {loading ? <div className="empty">Loading your knowledge graph…</div> : (
         <>
           {graph?.belowMinimum && !graph.nodes.length ? (
@@ -361,29 +465,39 @@ export function KnowledgeGraphPage() {
           ) : (
             <div className="graph-layout">
               <section className="graph-canvas-panel">
-                <div className="graph-search">
-                  <span><Search size={15} /></span>
-                  <input value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} placeholder="Search concepts…" />
+                <div className="graph-toolbar">
+                  <div className="graph-search">
+                  <span><Search size={17} /></span>
+                  <input aria-label="Search concepts" value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} placeholder="Search concepts…" />
+                  </div>
+                  <div className="graph-zoom-controls" aria-label="Graph zoom controls">
+                    <button type="button" onClick={() => changeZoom(-0.15)} aria-label="Zoom out">−</button>
+                    <button type="button" className="graph-reset-view" onClick={resetView}>Reset</button>
+                    <button type="button" onClick={() => changeZoom(0.15)} aria-label="Zoom in">+</button>
+                  </div>
                 </div>
+                <div ref={canvasViewportRef} className="graph-canvas-viewport">
                 <canvas
                   ref={canvasRef}
                   width={CANVAS_WIDTH}
                   height={CANVAS_HEIGHT}
                   className="graph-canvas"
-                  onMouseDown={handleMouseDown}
-                  onMouseMove={handleMouseMove}
-                  onMouseUp={handleMouseUp}
-                  onMouseLeave={() => { dragRef.current = null; }}
+                  onPointerDown={handlePointerDown}
+                  onPointerMove={handlePointerMove}
+                  onPointerUp={handlePointerUp}
+                  onPointerCancel={() => { dragRef.current = null; }}
                   onWheel={handleWheel}
+                  aria-label="Interactive knowledge graph. Drag to explore and select a concept for details."
                 />
+                </div>
                 <div className="graph-legend">
                   <span><i className="graph-legend-dot" style={{ background: masteryColor(0) }} /> Weak</span>
                   <span><i className="graph-legend-dot" style={{ background: masteryColor(0.5) }} /> Developing</span>
                   <span><i className="graph-legend-dot" style={{ background: masteryColor(1) }} /> Strong</span>
-                  <span className="graph-legend-hint">Drag nodes to rearrange · scroll to zoom · drag background to pan</span>
+                  <span className="graph-legend-hint">Drag to explore · select a concept · use − and + to zoom</span>
                 </div>
               </section>
-              <aside className="graph-detail-panel">
+              <aside ref={detailPanelRef} className="graph-detail-panel" aria-live="polite">
                 {selectedNode ? (
                   <>
                     <div className="section-kicker">CONCEPT</div>
@@ -410,9 +524,9 @@ export function KnowledgeGraphPage() {
                         ))}
                       </div>
                     )}
-                    <Link className="button button-primary graph-ask-tutor" href={`/ai-tutor?topicId=${topicId}&concept=${encodeURIComponent(selectedNode.name)}`}>
+                    <button type="button" className="button button-primary graph-ask-tutor" onClick={() => askTutorAboutConcept(selectedNode.name)}>
                       <Sparkles size={14} /> Ask the tutor about this
-                    </Link>
+                    </button>
                   </>
                 ) : (
                   <div className="empty">Click a concept to see its details.</div>

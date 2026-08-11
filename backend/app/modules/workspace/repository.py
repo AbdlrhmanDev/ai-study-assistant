@@ -8,13 +8,20 @@ def _owned_query(user_id: int) -> Select:
     return select(WorkspacePage).where(WorkspacePage.user_id == user_id)
 
 
+# Safety cap -- with topic_id=None this lists every page a user owns across
+# every topic, which grows unbounded as they create pages over time.
+_PAGE_LIST_CAP = 500
+
+
 async def list_for_user(
     db: AsyncSession, user_id: int, topic_id: int | None = None
 ) -> list[WorkspacePage]:
     stmt = _owned_query(user_id)
     if topic_id is not None:
         stmt = stmt.where(WorkspacePage.topic_id == topic_id)
-    stmt = stmt.order_by(WorkspacePage.updated_at.desc(), WorkspacePage.id.desc())
+    stmt = stmt.order_by(WorkspacePage.updated_at.desc(), WorkspacePage.id.desc()).limit(
+        _PAGE_LIST_CAP
+    )
     result = await db.execute(stmt)
     return list(result.scalars().all())
 

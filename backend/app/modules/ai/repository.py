@@ -159,6 +159,10 @@ async def insert_document_chunks(
     chunks: list[str],
     embeddings: list[list[float] | None],
 ) -> None:
+    """Delete-then-insert (like `replace_note_chunks`) so a re-run -- a
+    retried/re-enqueued indexing job for the same document -- never
+    duplicates chunks."""
+    await db.execute(delete(DocumentChunk).where(DocumentChunk.document_id == document_id))
     for index, (content, embedding) in enumerate(zip(chunks, embeddings, strict=True)):
         db.add(
             DocumentChunk(
@@ -223,9 +227,22 @@ async def get_document_for_topic(
     return result.scalar_one_or_none()
 
 
+# Safety cap for the user-facing document list -- prevents an account that's
+# uploaded thousands of documents to one topic from turning a routine list
+# request into an unbounded table scan / multi-MB response. Ordered by
+# recency, so the cap still returns the documents someone actually cares
+# about. Internal callers that need the *complete* set (e.g. flashcard
+# generation, which must consider every document) stay well under this in
+# practice, but should not rely on this function for exhaustive results.
+_DOCUMENT_LIST_CAP = 500
+
+
 async def list_documents_by_topic(db: AsyncSession, topic_id: int) -> list[Document]:
     result = await db.execute(
-        select(Document).where(Document.topic_id == topic_id).order_by(Document.created_at.desc())
+        select(Document)
+        .where(Document.topic_id == topic_id)
+        .order_by(Document.created_at.desc())
+        .limit(_DOCUMENT_LIST_CAP)
     )
     return list(result.scalars().all())
 

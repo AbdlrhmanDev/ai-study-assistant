@@ -291,3 +291,69 @@ async def test_ask_ai_rejects_empty_instruction(
     )
 
     assert response.status_code == 422
+
+
+async def test_update_page_without_expected_updated_at_always_overwrites(
+    authed_client: AsyncClient, db_session: AsyncSession, test_user: User,
+):
+    """Existing/older clients that never send expectedUpdatedAt keep their
+    current always-wins behavior -- the guard is opt-in."""
+    page = await _create_page(db_session, test_user, title="Original")
+
+    first = await authed_client.patch(f"/api/v1/workspace-pages/{page.id}", json={"title": "Tab A edit"})
+    assert first.status_code == 200
+    second = await authed_client.patch(f"/api/v1/workspace-pages/{page.id}", json={"title": "Tab B edit"})
+    assert second.status_code == 200
+    assert second.json()["page"]["title"] == "Tab B edit"
+
+
+async def test_update_page_with_stale_expected_updated_at_returns_conflict(
+    authed_client: AsyncClient, db_session: AsyncSession, test_user: User,
+):
+    """Simulates a second tab having saved in between: rather than relying
+    on wall-clock time actually advancing (Postgres's `now()` is frozen for
+    the whole test -- it's one outer transaction), directly backdate
+    updated_at the way a real prior save would have left it different from
+    what a stale client still holds."""
+    from datetime import timedelta
+
+    page = await _create_page(db_session, test_user, title="Original")
+    stale_updated_at = page.updated_at.isoformat()
+    # Mutate the already-identity-mapped ORM object directly, not a raw
+    # Core UPDATE -- a Core-style bulk update bypasses the identity map, so
+    # this same session's later ORM reads of `page` (via the request below)
+    # would keep returning the stale cached object instead of picking up
+    # the new value, defeating the point of this test.
+    page.title = "Saved from another tab"
+    page.updated_at = page.updated_at + timedelta(seconds=5)
+    await db_session.commit()
+
+    conflicting_save = await authed_client.patch(
+        f"/api/v1/workspace-pages/{page.id}",
+        json={"title": "Saved from the stale tab", "expectedUpdatedAt": stale_updated_at},
+    )
+
+    assert conflicting_save.status_code == 409
+    body = conflicting_save.json()
+    assert body["details"]["code"] == "WORKSPACE_PAGE_CONFLICT"
+    assert body["details"]["current"]["title"] == "Saved from another tab"
+
+    # The conflicting write must not have applied.
+    unchanged = await authed_client.get(f"/api/v1/workspace-pages/{page.id}")
+    assert unchanged.json()["page"]["title"] == "Saved from another tab"
+
+
+async def test_update_page_with_current_expected_updated_at_succeeds(
+    authed_client: AsyncClient, db_session: AsyncSession, test_user: User,
+):
+    page = await _create_page(db_session, test_user, title="Original")
+    loaded = await authed_client.get(f"/api/v1/workspace-pages/{page.id}")
+    current_updated_at = loaded.json()["page"]["updated_at"]
+
+    response = await authed_client.patch(
+        f"/api/v1/workspace-pages/{page.id}",
+        json={"title": "Up to date save", "expectedUpdatedAt": current_updated_at},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["page"]["title"] == "Up to date save"

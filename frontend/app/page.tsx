@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ArrowRight, Brain, Code2, Flame, Play, Sparkles } from "lucide-react";
+import { ArrowRight, Brain, Code2, Flame, Menu, Play, Sparkles } from "lucide-react";
 
 const features = [
   ["01", "Organize your learning", "Create focused study topics and keep every note exactly where it belongs."],
@@ -15,6 +15,14 @@ export default function Home() {
         <div className="nav-links">
           <a href="#features">Features</a><a href="#how">How it works</a>
         </div>
+        <details className="landing-mobile-menu">
+          <summary aria-label="Open navigation"><Menu size={21} aria-hidden="true" /></summary>
+          <div>
+            <a href="#features">Features</a>
+            <a href="#how">How it works</a>
+            <Link href="/login">Log in</Link>
+          </div>
+        </details>
         <div className="nav-actions">
           <Link className="text-button" href="/login">Log in</Link>
           <Link className="button button-dark button-small" href="/register">Start learning <span><ArrowRight size={14} /></span></Link>

@@ -1,6 +1,7 @@
-from fastapi import APIRouter, Query, status
+from fastapi import APIRouter, Header, Query, status
 
 from ...api.dependencies import CurrentUser, DbSession
+from ...core.idempotency import with_idempotency
 from ...shared.responses import no_content
 from . import service
 from .model import Flashcard
@@ -44,9 +45,15 @@ async def create_flashcard(topic_id: int, payload: FlashcardCreate, db: DbSessio
 
 
 @router.post("/topics/{topic_id}/flashcards/generate", status_code=status.HTTP_201_CREATED)
-async def generate_flashcards(topic_id: int, payload: FlashcardGenerate, db: DbSession, user: CurrentUser):
-    entries = await service.generate_flashcards(db, topic_id, user["id"], payload)
-    return {"flashcards": [_serialize(entry) for entry in entries]}
+async def generate_flashcards(
+    topic_id: int, payload: FlashcardGenerate, db: DbSession, user: CurrentUser,
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
+):
+    async def _compute() -> dict:
+        entries = await service.generate_flashcards(db, topic_id, user["id"], payload)
+        return {"flashcards": [_serialize(entry) for entry in entries]}
+
+    return await with_idempotency(user["id"], "flashcards_generate", idempotency_key, _compute)
 
 
 @router.get("/topics/{topic_id}/flashcards/due")
@@ -73,6 +80,12 @@ async def get_due_queue(db: DbSession, user: CurrentUser, limit: int = Query(50,
 async def get_dashboard_stats(db: DbSession, user: CurrentUser):
     stats = await service.get_dashboard_stats(db, user["id"])
     return DashboardStatsOut(**stats).model_dump(mode="json")
+
+
+@router.get("/flashcards/stats-by-topic")
+async def get_deck_stats_for_user(db: DbSession, user: CurrentUser):
+    stats = await service.get_deck_stats_for_user(db, user["id"])
+    return {"stats": [DeckStatsOut(**entry).model_dump(mode="json") for entry in stats]}
 
 
 @router.patch("/flashcards/{flashcard_id}")

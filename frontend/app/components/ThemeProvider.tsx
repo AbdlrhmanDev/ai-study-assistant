@@ -1,10 +1,7 @@
 "use client";
 
-import { createContext, ReactNode, useContext, useEffect, useState } from "react";
-
-type Theme = "light" | "dark";
-
-const ThemeContext = createContext<{ theme: Theme; toggleTheme: () => void } | null>(null);
+import { ReactNode, useEffect, useState } from "react";
+import { Theme, ThemeContext } from "./theme-context";
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
   // The inline <script> in layout.tsx already set data-theme on <html>
@@ -20,7 +17,6 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const current = document.documentElement.getAttribute("data-theme");
     if (current === "dark") {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
       setTheme("dark");
     }
   }, []);
@@ -35,10 +31,4 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   }
 
   return <ThemeContext.Provider value={{ theme, toggleTheme }}>{children}</ThemeContext.Provider>;
-}
-
-export function useTheme() {
-  const ctx = useContext(ThemeContext);
-  if (!ctx) throw new Error("useTheme must be used inside <ThemeProvider>");
-  return ctx;
 }

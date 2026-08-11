@@ -6,6 +6,7 @@ requires-python = ">=3.11"
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
+addopts = "--basetemp=.test-runtime/pytest-tmp -o cache_dir=.test-runtime/pytest-cache"
 asyncio_mode = "auto"
 # get_engine()/get_sessionmaker() (app/db/session.py) are process-wide
 # lru_cache singletons -- fine in production (one event loop per worker),
@@ -15,4 +16,6 @@ asyncio_mode = "auto"
 # one event loop for the whole session matches the singleton's assumption.
 asyncio_default_fixture_loop_scope = "session"
 asyncio_default_test_loop_scope = "session"
-
+markers = [
+    "smoke: critical user journeys used by CI for fast release confidence",
+]

@@ -64,7 +64,7 @@ async def create_note(
     )
     await db.commit()
     await db.refresh(note)
-    ai_indexing.index_note_in_background(background_tasks, note.id)
+    await ai_indexing.enqueue_note_index(note.id)
     return note
 
 
@@ -90,7 +90,7 @@ async def update_note(
     )
     await db.commit()
     await db.refresh(note)
-    ai_indexing.index_note_in_background(background_tasks, note.id)
+    await ai_indexing.enqueue_note_index(note.id)
     return note
 
 

@@ -34,7 +34,9 @@ async def test_get_mind_map_before_generation_returns_empty(
     response = await authed_client.get(f"/api/v1/topics/{topic.id}/mind-map")
 
     assert response.status_code == 200
-    assert response.json() == {"structure": None, "nodeCount": 0, "updatedAt": None}
+    body = response.json()
+    assert body["structure"] is None and body["nodeCount"] == 0 and body["updatedAt"] is None
+    assert body["buildStatus"] == {"status": "completed", "errorMessage": None}
 
 
 async def test_rebuild_mind_map_creates_structure(
@@ -43,15 +45,19 @@ async def test_rebuild_mind_map_creates_structure(
     mock_ai_generate(MOCK_MIND_MAP_RESPONSE)
     topic = await _create_topic_with_note(db_session, test_user)
 
-    response = await authed_client.post(f"/api/v1/topics/{topic.id}/mind-map/rebuild")
+    rebuild = await authed_client.post(f"/api/v1/topics/{topic.id}/mind-map/rebuild")
+    assert rebuild.status_code == 202, rebuild.text
+    assert rebuild.json()["status"] == "completed"
 
+    response = await authed_client.get(f"/api/v1/topics/{topic.id}/mind-map")
     assert response.status_code == 200
     body = response.json()
     assert body["structure"]["title"] == "Photosynthesis"
     assert body["nodeCount"] == 4  # root + 2 branches + 1 sub-branch
+    assert body["buildStatus"] == {"status": "completed", "errorMessage": None}
 
 
-async def test_rebuild_mind_map_without_content_returns_422(
+async def test_rebuild_mind_map_without_content_returns_422_and_records_failed_status(
     authed_client: AsyncClient, db_session: AsyncSession, test_user: User, mock_ai_generate
 ):
     topic = Topic(user_id=test_user.id, title="Empty Topic", description=None)
@@ -61,6 +67,8 @@ async def test_rebuild_mind_map_without_content_returns_422(
     response = await authed_client.post(f"/api/v1/topics/{topic.id}/mind-map/rebuild")
 
     assert response.status_code == 422
+    mind_map = await authed_client.get(f"/api/v1/topics/{topic.id}/mind-map")
+    assert mind_map.json()["buildStatus"]["status"] == "failed"
 
 
 async def test_rebuild_mind_map_unowned_topic_returns_404(

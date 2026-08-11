@@ -409,3 +409,27 @@ async def get_dashboard_stats(db: AsyncSession, user_id: int) -> dict:
         "retention_rate": round(remembered / total_reviews * 100, 1) if total_reviews else None,
         "next_review_at": next_review_at,
     }
+
+
+async def get_deck_stats_for_user(db: AsyncSession, user_id: int) -> list[dict]:
+    topics = await topics_service.list_topics(db, user_id)
+    cards, reviews = await repository.deck_stats_for_user(
+        db, user_id, datetime.now(timezone.utc)
+    )
+    result: list[dict] = []
+    for topic in topics:
+        card_stats = cards.get(topic.id, {})
+        total_reviews, remembered = reviews.get(topic.id, (0, 0))
+        result.append(
+            {
+                "topic_id": topic.id,
+                "total": card_stats.get("total", 0),
+                "due_today": card_stats.get("due_today", 0),
+                "difficult": card_stats.get("difficult", 0),
+                "retention_rate": (
+                    round(remembered / total_reviews * 100, 1) if total_reviews else None
+                ),
+                "next_review_at": card_stats.get("next_review_at"),
+            }
+        )
+    return result

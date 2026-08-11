@@ -1,0 +1,17 @@
+name: Production synthetic check
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+jobs:
+  health:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check API readiness
+        env:
+          HEALTH_URL: ${{ secrets.PRODUCTION_HEALTH_URL }}
+        run: |
+          test -n "$HEALTH_URL"
+          curl --fail --retry 3 --retry-all-errors --max-time 15 "$HEALTH_URL"

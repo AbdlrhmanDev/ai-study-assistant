@@ -28,7 +28,7 @@ async def register(payload: RegisterIn, request: Request, db: DbSession):
             password=payload.password,
         )
     except AppError:
-        record_auth_failure(request)
+        record_auth_failure(request, reason="register_rejected")
         raise
     return {"user": user}
 
@@ -38,7 +38,7 @@ async def login(payload: LoginIn, request: Request, db: DbSession):
     try:
         user = await service.login(db, request, email=str(payload.email), password=payload.password)
     except AppError:
-        record_auth_failure(request)
+        record_auth_failure(request, reason="invalid_credentials")
         raise
     return {"user": user}
 
@@ -50,8 +50,11 @@ async def logout(request: Request):
 
 
 @router.get("/me")
-async def me(request: Request):
-    return {"user": request.session.get("user")}
+async def me(request: Request, db: DbSession):
+    session_user = request.session.get("user")
+    if not session_user:
+        return {"user": None}
+    return {"user": await service.get_profile(db, int(session_user["id"]))}
 
 
 @router.patch("/me")

@@ -93,6 +93,11 @@ class WorkspacePageCreate(StrictModel):
 class WorkspacePageUpdate(StrictModel):
     title: str | None = Field(None, min_length=1, max_length=200)
     blocks: list[Block] | None = None
+    # Optimistic concurrency: the `updatedAt` this client last saw (from
+    # load or its own previous save). If omitted, the write always wins
+    # (matches today's behavior) -- callers that care about detecting a
+    # concurrent-tab conflict must opt in by sending it.
+    expectedUpdatedAt: str | None = None
 
     @model_validator(mode="after")
     def require_value(self) -> "WorkspacePageUpdate":

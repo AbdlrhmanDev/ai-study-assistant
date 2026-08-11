@@ -1,2 +1,2 @@
-import { HistoryPage } from "../components/BackendPages";
+import { HistoryPage } from "../components/pages/HistoryPage";
 export default function Page(){return <HistoryPage/>}

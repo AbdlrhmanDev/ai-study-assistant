@@ -16,10 +16,13 @@ from app.db.base import Base
 from app.modules.auth.model import UserSession  # noqa: F401
 from app.modules.ai.model import ChatMessage  # noqa: F401
 from app.modules.agents.model import AgentSession  # noqa: F401
+from app.modules.cleanup.model import CleanupRun  # noqa: F401
 from app.modules.coach.model import StudyGoal  # noqa: F401
 from app.modules.exams.model import Exam  # noqa: F401
 from app.modules.flashcards.model import Flashcard  # noqa: F401
 from app.modules.gamification.model import XpEvent  # noqa: F401
+from app.modules.graph_builds.model import TopicBuildStatus  # noqa: F401
+from app.modules.jobs.model import BackgroundJob  # noqa: F401
 from app.modules.knowledge_graph.model import ConceptRelation  # noqa: F401
 from app.modules.learning_style.model import LearningStyleProfile  # noqa: F401
 from app.modules.mastery.model import Concept  # noqa: F401
@@ -31,6 +34,7 @@ from app.modules.study_history.model import StudyActivity  # noqa: F401
 from app.modules.topics.model import Topic  # noqa: F401
 from app.modules.users.model import User  # noqa: F401
 from app.modules.workspace.model import WorkspacePage  # noqa: F401
+from app.modules.usage.model import UsageEvent  # noqa: F401
 
 config = context.config
 config.set_main_option("sqlalchemy.url", get_settings().sqlalchemy_database_url)

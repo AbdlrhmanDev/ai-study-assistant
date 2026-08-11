@@ -2,6 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 import { THEME_SCRIPT } from "./lib/theme-script";
 import { ThemeProvider } from "./components/ThemeProvider";
+import { ErrorBoundary } from "./components/ErrorBoundary";
+import { GlobalDialogFocusTrap } from "./components/GlobalDialogFocusTrap";
 
 export const metadata: Metadata = {
   title: "Studia — AI Study Assistant",
@@ -16,7 +18,10 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
         <script dangerouslySetInnerHTML={{ __html: THEME_SCRIPT }} />
       </head>
       <body>
-        <ThemeProvider>{children}</ThemeProvider>
+        <ErrorBoundary>
+          <ThemeProvider>{children}</ThemeProvider>
+          <GlobalDialogFocusTrap />
+        </ErrorBoundary>
       </body>
     </html>
   );

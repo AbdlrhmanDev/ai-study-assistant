@@ -1,6 +1,7 @@
-from fastapi import APIRouter, status
+from fastapi import APIRouter, Header, status
 
 from ...api.dependencies import CurrentUser, DbSession
+from ...core.idempotency import with_idempotency
 from ...shared.responses import no_content
 from . import service
 from .model import Exam, ExamQuestion
@@ -45,6 +46,12 @@ def _serialize_question_for_taking(entry: tuple[ExamQuestion, str | None, str | 
     }
 
 
+@router.get("/exams/counts-by-topic")
+async def count_exams_by_topic(db: DbSession, user: CurrentUser):
+    counts = await service.count_exams_by_topic(db, user["id"])
+    return {"counts": counts}
+
+
 @router.get("/topics/{topic_id}/exams")
 async def list_exams(topic_id: int, db: DbSession, user: CurrentUser):
     entries = await service.list_exams(db, topic_id, user["id"])
@@ -61,12 +68,18 @@ async def list_exams(topic_id: int, db: DbSession, user: CurrentUser):
 
 
 @router.post("/topics/{topic_id}/exams/generate", status_code=status.HTTP_201_CREATED)
-async def generate_exam(topic_id: int, payload: ExamGenerate, db: DbSession, user: CurrentUser):
-    exam, questions = await service.generate_exam(db, topic_id, user["id"], payload)
-    return {
-        "exam": _serialize_exam(exam),
-        "questions": [_serialize_question_for_taking(entry) for entry in questions],
-    }
+async def generate_exam(
+    topic_id: int, payload: ExamGenerate, db: DbSession, user: CurrentUser,
+    idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
+):
+    async def _compute() -> dict:
+        exam, questions = await service.generate_exam(db, topic_id, user["id"], payload)
+        return {
+            "exam": _serialize_exam(exam),
+            "questions": [_serialize_question_for_taking(entry) for entry in questions],
+        }
+
+    return await with_idempotency(user["id"], "exam_generate", idempotency_key, _compute)
 
 
 @router.get("/exams/{exam_id}")

@@ -1,3 +1,4 @@
+import structlog
 from fastapi import BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -20,6 +21,9 @@ from .exceptions import (
 from .model import ChatMessage, Document
 from .schema import SourceOut
 from .storage import get_storage_backend
+from .storage_keys import document_key
+
+logger = structlog.get_logger("study_assistant")
 
 MODEL_HISTORY_LIMIT = 10
 SUPPORTED_IMAGE_CONTENT_TYPES = {"image/png", "image/jpeg", "image/webp"}
@@ -93,7 +97,7 @@ async def chat_with_tutor(
     await db.commit()
 
     if background_tasks is not None:
-        memory_indexing.extract_memory_in_background(background_tasks, user_id, question, answer)
+        await memory_indexing.enqueue_memory_extraction(user_id, question, answer)
 
     return {
         "answer": answer,
@@ -163,7 +167,7 @@ async def chat_with_tutor_image(
     await db.commit()
 
     if background_tasks is not None:
-        memory_indexing.extract_memory_in_background(background_tasks, user_id, stored_question, answer)
+        await memory_indexing.enqueue_memory_extraction(user_id, stored_question, answer)
 
     return {
         "answer": answer,
@@ -249,7 +253,7 @@ async def spar_with_tutor(
     await db.commit()
 
     if background_tasks is not None:
-        memory_indexing.extract_memory_in_background(background_tasks, user_id, user_message_text, answer)
+        await memory_indexing.enqueue_memory_extraction(user_id, user_message_text, answer)
 
     return {
         "answer": answer,
@@ -300,10 +304,11 @@ async def create_document(
     await topics_service.get_owned_topic_or_404(db, topic_id, user_id)
 
     settings = get_settings()
-    if content_type not in text_extraction.SUPPORTED_CONTENT_TYPES:
-        raise UnsupportedFileTypeError(content_type)
     if len(raw_bytes) > settings.max_upload_bytes:
         raise FileTooLargeError(settings.max_upload_mb)
+    from .upload_security import scan_for_malware, validate_document
+    content_type = validate_document(filename, content_type, raw_bytes)
+    scan_for_malware(raw_bytes)
 
     document = await repository.create_document(
         db,
@@ -316,13 +321,36 @@ async def create_document(
     await db.refresh(document)
 
     storage = get_storage_backend()
-    storage_path = storage.save(f"{document.id}/{filename}", raw_bytes)
+    from pathlib import Path
+    safe_suffix = Path(filename).suffix.lower()
+    storage_path = storage.save(
+        document_key(user_id, document.id, safe_suffix), raw_bytes, content_type
+    )
     await repository.set_document_storage_path(db, document.id, storage_path)
     await db.commit()
     await db.refresh(document)
 
-    indexing.index_document_in_background(background_tasks, document.id)
+    await indexing.enqueue_document_index(document.id)
     return document
+
+
+async def retry_document_index(db: AsyncSession, document_id: int, user_id: int) -> Document:
+    document = await get_document(db, document_id, user_id)
+    await repository.update_document_status(db, document.id, status="pending")
+    await db.commit()
+    await indexing.enqueue_document_index(document.id)
+    await db.refresh(document)
+    return document
+
+
+async def get_document_download_url(db: AsyncSession, document_id: int, user_id: int) -> str:
+    document = await get_document(db, document_id, user_id)
+    if not document.storage_path:
+        raise DocumentNotReadyError(document.status)
+    url = get_storage_backend().signed_download_url(document.storage_path)
+    if not url:
+        raise AppError("Signed downloads are available with object storage", 409)
+    return url
 
 
 async def get_document(db: AsyncSession, document_id: int, user_id: int) -> Document:
@@ -339,9 +367,18 @@ async def list_documents(db: AsyncSession, topic_id: int, user_id: int) -> list[
 
 
 async def delete_document(db: AsyncSession, document_id: int, user_id: int) -> None:
+    """Idempotent: retrying after a previous storage-side failure still
+    removes the DB row (and cascaded chunks) instead of getting stuck --
+    an object that's already gone, or a transient storage error, never
+    blocks the user-facing delete."""
     document = await get_document(db, document_id, user_id)
     storage = get_storage_backend()
     if document.storage_path:
-        storage.delete(document.storage_path)
+        try:
+            storage.delete(document.storage_path)
+        except Exception:
+            logger.warning(
+                "document_delete_storage_object_failed", document_id=document.id, exc_info=True
+            )
     await repository.delete_document(db, document)
     await db.commit()

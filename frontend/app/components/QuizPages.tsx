@@ -28,12 +28,18 @@ import {
   documentTypeBadge,
   humanizeFilename,
   useAuthFailure,
-} from "./BackendPages";
-import { api, Note, Pagination, Topic, messageFromError } from "../lib/api";
+} from "./shared/PageChrome";
+import { api, idempotencyHeader, Note, Pagination, Topic, messageFromError } from "../lib/api";
+import { LoadingState } from "./ui";
 
 export type QuestionType = "multiple_choice" | "true_false" | "short_answer" | "fill_blank" | "matching" | "scenario";
 export type Difficulty = "easy" | "medium" | "hard" | "mixed";
 export type QuizSource = "topic" | "note" | "document" | "concept" | "weak_areas";
+
+function withEmbedded(path: string, embedded: boolean) {
+  if (!embedded) return path;
+  return `${path}${path.includes("?") ? "&" : "?"}embedded=1`;
+}
 
 export type Quiz = {
   id: number;
@@ -151,6 +157,8 @@ function formatSeconds(totalSeconds: number | null): string {
 // --------------------------------------------------------------------------
 
 export function QuizzesPage() {
+  const params = useSearchParams();
+  const embedded = params.get("embedded") === "1";
   const handleAuthFailure = useAuthFailure();
   const [topics, setTopics] = useState<Topic[]>([]);
   const [quizCounts, setQuizCounts] = useState<Record<number, number>>({});
@@ -161,16 +169,12 @@ export function QuizzesPage() {
     setLoading(true);
     setError("");
     try {
-      const topicsResult = await api<{ topics: Topic[] }>("/topics");
+      const [topicsResult, countsResult] = await Promise.all([
+        api<{ topics: Topic[] }>("/topics"),
+        api<{ counts: Record<number, number> }>("/quizzes/counts-by-topic"),
+      ]);
       setTopics(topicsResult.topics);
-      const counts = await Promise.all(
-        topicsResult.topics.map((topic) =>
-          api<{ quizzes: QuizListEntry[] }>(`/topics/${topic.id}/quizzes`).then((result) => result.quizzes.length).catch(() => 0),
-        ),
-      );
-      const countsMap: Record<number, number> = {};
-      topicsResult.topics.forEach((topic, index) => { countsMap[topic.id] = counts[index]; });
-      setQuizCounts(countsMap);
+      setQuizCounts(countsResult.counts);
     } catch (requestError) {
       handleAuthFailure(requestError);
       setError(messageFromError(requestError));
@@ -185,9 +189,9 @@ export function QuizzesPage() {
   }, [load]);
 
   return (
-    <PageShell title="Quizzes" subtitle="Turn your notes and documents into structured, gradeable assessments.">
+    <PageShell className="quizzes-page" title="Quizzes" subtitle="Turn your notes and documents into structured, gradeable assessments.">
       {error && <p className="page-error" role="alert">{error}</p>}
-      {loading ? <div className="empty">Loading your topics…</div> : (
+      {loading ? <LoadingState label="Loading your quizzes…" /> : (
         <div className="deck-grid">
           {topics.map((topic) => (
             <article className="deck-card" key={topic.id}>
@@ -195,14 +199,14 @@ export function QuizzesPage() {
               <h2>{topic.title}</h2>
               <p>{quizCounts[topic.id] ?? 0} quiz{quizCounts[topic.id] === 1 ? "" : "zes"}</p>
               <div className="deck-card-actions">
-                <Link className="button button-primary" href={`/quizzes/topic?topicId=${topic.id}`}>Open quizzes</Link>
+                <Link className="button button-primary" href={withEmbedded(`/quizzes/topic?topicId=${topic.id}`, embedded)}>Open quizzes</Link>
               </div>
             </article>
           ))}
           {!topics.length && (
             <div className="empty">
               Create a topic and add notes or documents, then generate your first quiz.
-              <div><Link className="button button-primary" href="/topics">Create topic</Link></div>
+              <div><Link className="button button-primary" href="/topics" target={embedded ? "_top" : undefined}>Create topic</Link></div>
             </div>
           )}
         </div>
@@ -220,6 +224,8 @@ export function QuizTopicPage() {
   const router = useRouter();
   const handleAuthFailure = useAuthFailure();
   const topicId = Number(params.get("topicId"));
+  const embedded = params.get("embedded") === "1";
+  const requestedWeakPractice = params.get("practice") === "weak_areas";
 
   const [topic, setTopic] = useState<Topic | null>(null);
   const [quizzes, setQuizzes] = useState<QuizListEntry[]>([]);
@@ -228,8 +234,8 @@ export function QuizTopicPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  const [showGenerate, setShowGenerate] = useState(false);
-  const [source, setSource] = useState<QuizSource>("topic");
+  const [showGenerate, setShowGenerate] = useState(requestedWeakPractice);
+  const [source, setSource] = useState<QuizSource>(requestedWeakPractice ? "weak_areas" : "topic");
   const [selectedTypes, setSelectedTypes] = useState<QuestionType[]>(ALL_QUESTION_TYPES);
   const [timed, setTimed] = useState(false);
   const [adaptive, setAdaptive] = useState(false);
@@ -240,7 +246,7 @@ export function QuizTopicPage() {
 
   const load = useCallback(async () => {
     if (!Number.isInteger(topicId) || topicId < 1) {
-      router.replace("/quizzes");
+      router.replace(withEmbedded("/quizzes", embedded));
       return;
     }
     setLoading(true);
@@ -262,7 +268,7 @@ export function QuizTopicPage() {
     } finally {
       setLoading(false);
     }
-  }, [handleAuthFailure, router, topicId]);
+  }, [embedded, handleAuthFailure, router, topicId]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => void load(), 0);
@@ -289,6 +295,7 @@ export function QuizTopicPage() {
     try {
       const result = await api<{ quiz: Quiz }>(`/topics/${topicId}/quizzes/generate`, {
         method: "POST",
+        headers: idempotencyHeader(),
         body: JSON.stringify({
           source,
           count: Number(data.get("count")) || 10,
@@ -303,7 +310,7 @@ export function QuizTopicPage() {
         }),
       });
       setShowGenerate(false);
-      router.push(`/quizzes/take?quizId=${result.quiz.id}`);
+      router.push(withEmbedded(`/quizzes/take?quizId=${result.quiz.id}`, embedded));
     } catch (requestError) {
       setGenError(messageFromError(requestError));
     } finally {
@@ -327,11 +334,12 @@ export function QuizTopicPage() {
 
   return (
     <PageShell
+      className="quiz-topic-page"
       title={topic?.title ?? "Quizzes"}
       subtitle="Generate a new quiz, or pick up an existing one."
       action={<div className="page-actions">
         <button className="button button-primary" onClick={() => setShowGenerate(true)}><Sparkles size={15} /> Generate quiz</button>
-        <Link className="back-topics" href="/quizzes"><ArrowLeft size={13} /> All topics</Link>
+        <Link className="back-topics" href={withEmbedded("/quizzes", embedded)}><ArrowLeft size={13} /> All topics</Link>
       </div>}
     >
       {error && <p className="page-error" role="alert">{error}</p>}
@@ -355,11 +363,11 @@ export function QuizTopicPage() {
                 </div>
               </div>
               <div className="note-actions">
-                <Link className="note-action edit-action" href={`/quizzes/take?quizId=${quiz.id}`}>
+                <Link className="note-action edit-action" href={withEmbedded(`/quizzes/take?quizId=${quiz.id}`, embedded)}>
                   <span><Play size={12} fill="currentColor" /></span>{quiz.latestAttempt ? "Retake" : "Take quiz"}
                 </Link>
                 {quiz.latestAttempt && (
-                  <Link className="note-action" href={`/quizzes/results?attemptId=${quiz.latestAttempt.id}&topicId=${topicId}`}>
+                  <Link className="note-action" href={withEmbedded(`/quizzes/results?attemptId=${quiz.latestAttempt.id}&topicId=${topicId}`, embedded)}>
                     <span><BarChart3 size={13} /></span>Last results
                   </Link>
                 )}
@@ -376,7 +384,7 @@ export function QuizTopicPage() {
       {showGenerate && (
         <div className="modal-backdrop" onMouseDown={() => setShowGenerate(false)}>
           <form role="dialog" aria-modal="true" className="topic-modal action-modal quiz-generate-modal" onSubmit={generateQuiz} onMouseDown={(event) => event.stopPropagation()}>
-            <button type="button" className="modal-close" onClick={() => setShowGenerate(false)}><X size={20} /></button>
+            <button type="button" className="modal-close" aria-label="Close" onClick={() => setShowGenerate(false)}><X size={20} /></button>
             <div className="modal-icon edit-icon"><ListChecks size={22} /></div>
             <div className="eyebrow">GENERATE A QUIZ</div>
             <h2>Generate quiz</h2>
@@ -454,7 +462,7 @@ export function QuizTopicPage() {
             )}
             <label className="check">
               <input type="checkbox" checked={adaptive} onChange={(event) => setAdaptive(event.target.checked)} /> Adaptive difficulty
-              <span className="modal-hint quiz-adaptive-hint">Questions get harder or easier as you answer, based on how you're doing.</span>
+              <span className="modal-hint quiz-adaptive-hint">Questions get harder or easier as you answer, based on how you&apos;re doing.</span>
             </label>
 
             <div className="modal-actions">
@@ -468,7 +476,7 @@ export function QuizTopicPage() {
       {deletingQuiz && (
         <div className="modal-backdrop" onMouseDown={() => (deleting ? null : setDeletingQuiz(null))}>
           <div role="alertdialog" aria-modal="true" className="topic-modal action-modal delete-modal" onMouseDown={(event) => event.stopPropagation()}>
-            <button type="button" className="modal-close" disabled={deleting} onClick={() => setDeletingQuiz(null)}><X size={20} /></button>
+            <button type="button" className="modal-close" aria-label="Close" disabled={deleting} onClick={() => setDeletingQuiz(null)}><X size={20} /></button>
             <div className="modal-icon delete-icon"><Trash2 size={22} /></div>
             <div className="eyebrow">REMOVE THIS QUIZ</div>
             <h2>Delete “{deletingQuiz.title}”?</h2>
@@ -507,6 +515,7 @@ function QuestionRenderer({
             type="button"
             key={index}
             className={`quiz-choice${value.index === index ? " selected" : ""}`}
+            aria-pressed={value.index === index}
             disabled={disabled}
             onClick={() => onChange({ index })}
           >
@@ -525,6 +534,7 @@ function QuestionRenderer({
             type="button"
             key={String(option)}
             className={`quiz-choice${value.value === option ? " selected" : ""}`}
+            aria-pressed={value.value === option}
             disabled={disabled}
             onClick={() => onChange({ value: option })}
           >
@@ -583,6 +593,7 @@ export function QuizTakePage() {
   const router = useRouter();
   const handleAuthFailure = useAuthFailure();
   const quizId = Number(params.get("quizId"));
+  const embedded = params.get("embedded") === "1";
 
   const [quiz, setQuiz] = useState<Quiz | null>(null);
   const [questions, setQuestions] = useState<QuestionForTaking[]>([]);
@@ -602,7 +613,7 @@ export function QuizTakePage() {
 
   const load = useCallback(async () => {
     if (!Number.isInteger(quizId) || quizId < 1) {
-      router.replace("/quizzes");
+      router.replace(withEmbedded("/quizzes", embedded));
       return;
     }
     setLoading(true);
@@ -617,7 +628,7 @@ export function QuizTakePage() {
     } finally {
       setLoading(false);
     }
-  }, [handleAuthFailure, router, quizId]);
+  }, [embedded, handleAuthFailure, router, quizId]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => void load(), 0);
@@ -630,12 +641,12 @@ export function QuizTakePage() {
     setCompleting(true);
     try {
       await api(`/quizzes/attempts/${attemptId}/complete`, { method: "POST" });
-      router.push(`/quizzes/results?attemptId=${attemptId}&topicId=${topicId}`);
+      router.push(withEmbedded(`/quizzes/results?attemptId=${attemptId}&topicId=${topicId}`, embedded));
     } catch (requestError) {
       setError(messageFromError(requestError));
       setCompleting(false);
     }
-  }, [router]);
+  }, [embedded, router]);
 
   useEffect(() => {
     if (!attempt || !quiz?.timed || timeRemaining == null) return;
@@ -725,7 +736,7 @@ export function QuizTakePage() {
 
   if (!attempt) {
     return (
-      <PageShell title={quiz.title} subtitle="Review the setup, then start when you're ready." action={<Link className="back-topics" href={`/quizzes/topic?topicId=${quiz.topic_id}`}><ArrowLeft size={13} /> Back to quizzes</Link>}>
+      <PageShell className="quiz-intro-page" title={quiz.title} subtitle="Review the setup, then start when you're ready." action={<Link className="back-topics" href={withEmbedded(`/quizzes/topic?topicId=${quiz.topic_id}`, embedded)}><ArrowLeft size={13} /> Back to quizzes</Link>}>
         {error && <p className="page-error" role="alert">{error}</p>}
         <section className="notes-panel quiz-intro-panel">
           <div className="flashcard-summary-row">
@@ -759,9 +770,10 @@ export function QuizTakePage() {
 
   return (
     <PageShell
+      className="quiz-session-page"
       title={quiz.title}
       subtitle="Rate your certainty, answer honestly, and move on."
-      action={quiz.timed && timeRemaining != null ? <span className="quiz-timer"><Clock size={14} /> {formatSeconds(timeRemaining)}</span> : undefined}
+      action={quiz.timed && timeRemaining != null ? <span className="quiz-timer" role="timer" aria-live="off" aria-label={`${timeRemaining} seconds remaining`}><Clock size={14} /> {formatSeconds(timeRemaining)}</span> : undefined}
     >
       {xpToast && <XpToast award={xpToast} onDismiss={() => setXpToast(null)} />}
       {error && <p className="page-error" role="alert">{error}</p>}
@@ -787,7 +799,7 @@ export function QuizTakePage() {
                 <strong>{currentFeedback.isCorrect ? "Correct!" : "Not quite."}</strong>
                 <p>{currentFeedback.explanation}</p>
                 {sourceLabel(currentFeedback) && (
-                  <Link className="source-chip document" href={`/topic?id=${quiz.topic_id}`}>
+                  <Link className="source-chip document" href={`/topic?id=${quiz.topic_id}`} target={embedded ? "_top" : undefined}>
                     {currentFeedback.sourceType === "note" ? <StickyNote size={12} /> : <FileText size={12} />} {sourceLabel(currentFeedback)}
                   </Link>
                 )}
@@ -868,6 +880,7 @@ export function QuizResultsPage() {
   const handleAuthFailure = useAuthFailure();
   const attemptId = Number(params.get("attemptId"));
   const topicId = Number(params.get("topicId"));
+  const embedded = params.get("embedded") === "1";
   const hasTopic = Number.isInteger(topicId) && topicId > 0;
 
   const [results, setResults] = useState<AttemptResults | null>(null);
@@ -880,7 +893,7 @@ export function QuizResultsPage() {
 
   const load = useCallback(async () => {
     if (!Number.isInteger(attemptId) || attemptId < 1) {
-      router.replace("/quizzes");
+      router.replace(withEmbedded("/quizzes", embedded));
       return;
     }
     setLoading(true);
@@ -893,7 +906,7 @@ export function QuizResultsPage() {
     } finally {
       setLoading(false);
     }
-  }, [attemptId, handleAuthFailure, router]);
+  }, [attemptId, embedded, handleAuthFailure, router]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => void load(), 0);
@@ -907,11 +920,12 @@ export function QuizResultsPage() {
     try {
       const result = await api<{ quiz: Quiz }>(`/topics/${topicId}/quizzes/generate`, {
         method: "POST",
+        headers: idempotencyHeader(),
         body: JSON.stringify({
           source: "weak_areas", count: 8, difficulty: "medium", questionTypes: ALL_QUESTION_TYPES,
         }),
       });
-      router.push(`/quizzes/take?quizId=${result.quiz.id}`);
+      router.push(withEmbedded(`/quizzes/take?quizId=${result.quiz.id}`, embedded));
     } catch (requestError) {
       setError(messageFromError(requestError));
     } finally {
@@ -943,7 +957,7 @@ export function QuizResultsPage() {
         `/quizzes/attempts/${attemptId}/questions/${questionId}/drill`,
         { method: "POST" },
       );
-      router.push(`/quizzes/take?quizId=${result.quiz.id}`);
+      router.push(withEmbedded(`/quizzes/take?quizId=${result.quiz.id}`, embedded));
     } catch (requestError) {
       setError(messageFromError(requestError));
       setDrillingFor(null);
@@ -954,7 +968,7 @@ export function QuizResultsPage() {
     <PageShell
       title="Quiz results"
       subtitle={results ? `${results.correctCount} of ${results.totalCount} correct` : "Loading your results…"}
-      action={hasTopic ? <Link className="back-topics" href={`/quizzes/topic?topicId=${topicId}`}><ArrowLeft size={13} /> Back to quizzes</Link> : undefined}
+      action={hasTopic ? <Link className="back-topics" href={withEmbedded(`/quizzes/topic?topicId=${topicId}`, embedded)}><ArrowLeft size={13} /> Back to quizzes</Link> : undefined}
     >
       {error && <p className="page-error" role="alert">{error}</p>}
       {loading ? <div className="empty">Loading your results…</div> : results && (

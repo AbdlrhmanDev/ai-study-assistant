@@ -23,6 +23,13 @@ class UserSession(Base):
     )
     data: Mapped[dict] = mapped_column(JSONB, nullable=False)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    # Approximate device/activity info for the account-security "active
+    # sessions" list -- populated best-effort on session writes (see
+    # SessionMiddleware); nullable because older/never-touched-again rows
+    # predate this and legitimate anonymous sessions have no user_id anyway.
+    user_agent: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    ip_address: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

@@ -29,7 +29,9 @@ from .logging import logger
 
 
 async def hash_password(password: str) -> str:
-    hashed = await run_in_threadpool(bcrypt.hashpw, password.encode(), bcrypt.gensalt(rounds=12))
+    hashed = await run_in_threadpool(bcrypt.hashpw,
+                                     password.encode(),
+                                     bcrypt.gensalt(rounds=12))
     return hashed.decode()
 
 
@@ -42,6 +44,10 @@ async def verify_password(password: str, password_hash: str) -> bool:
 # --------------------------------------------------------------------------
 
 SESSION_MAX_AGE_SECONDS = 7 * 24 * 60 * 60
+# Below this fraction of remaining TTL, an unchanged session still gets its
+# expiry pushed out (sliding expiration for active-but-read-only users)
+# instead of being skipped entirely -- see the write-skip logic below.
+SESSION_TOUCH_THRESHOLD_SECONDS = SESSION_MAX_AGE_SECONDS / 2
 
 
 def _cookie_name() -> str:
@@ -65,6 +71,14 @@ def regenerate_session(request: Request) -> None:
     """
     request.state.current_session_token = _new_token()
     request.scope["session"] = {}
+
+
+def current_session_token_hash(request: Request) -> str | None:
+    """The hash identifying *this* request's session row -- used to mark
+    which entry in an "active sessions" list is the current one, and to
+    exclude it from a "revoke all others" sweep."""
+    token = getattr(request.state, "session_token", None)
+    return _hash_token(token) if token else None
 
 
 def destroy_session(request: Request) -> None:
@@ -115,6 +129,7 @@ class SessionMiddleware(BaseHTTPMiddleware):
                 )
 
         data: dict = {}
+        original_expires_at: datetime | None = None
         if incoming_token:
             async with get_sessionmaker()() as db:
                 row = await session_repository.get_active(
@@ -122,7 +137,9 @@ class SessionMiddleware(BaseHTTPMiddleware):
                 )
                 if row is not None:
                     data = dict(row.data)
+                    original_expires_at = row.expires_at
 
+        original_data = dict(data)
         request.scope["session"] = data
         request.state.session_token = incoming_token
         request.state.session_action = None
@@ -132,7 +149,7 @@ class SessionMiddleware(BaseHTTPMiddleware):
         old_token = incoming_token
         current_token = getattr(request.state, "current_session_token", old_token)
         action = getattr(request.state, "session_action", None)
-        session_data = request.scope.get("session") or {}
+        session_data: dict = dict(request.scope.get("session") or {})
 
         if action == "destroy":
             token_to_delete = current_token or old_token
@@ -145,6 +162,22 @@ class SessionMiddleware(BaseHTTPMiddleware):
 
         regenerated = current_token != old_token
         if not regenerated and not session_data:
+            return response
+
+        # Every authenticated request used to upsert the session row
+        # unconditionally, which meant two DB round-trips per request just
+        # for session bookkeeping. Skip the write when the data hasn't
+        # changed and the session isn't close enough to expiring to need its
+        # TTL refreshed -- read-only browsing by an already-logged-in user
+        # now costs zero session writes instead of one per request.
+        data_changed = regenerated or session_data != original_data
+        needs_expiry_refresh = (
+            not regenerated
+            and original_expires_at is not None
+            and (original_expires_at - datetime.now(timezone.utc)).total_seconds()
+            < SESSION_TOUCH_THRESHOLD_SECONDS
+        )
+        if not data_changed and not needs_expiry_refresh:
             return response
 
         async with get_sessionmaker()() as db:
@@ -164,6 +197,9 @@ class SessionMiddleware(BaseHTTPMiddleware):
                     user_id=user_id,
                     data=session_data,
                     expires_at=expires_at,
+                    user_agent=(request.headers.get("user-agent") or "")[:300] or None,
+                    ip_address=get_remote_address(request),
+                    last_seen_at=datetime.now(timezone.utc),
                 )
                 await db.commit()
                 # Frontend and backend are deployed as separate services on
@@ -187,8 +223,8 @@ class SessionMiddleware(BaseHTTPMiddleware):
 
         return response
 
-
 # --------------------------------------------------------------------------
+
 # Rate limiting
 # --------------------------------------------------------------------------
 #
@@ -253,7 +289,10 @@ def check_auth_rate_limit(request: Request) -> None:
         raise AppError("Too many requests, please try again later", 429)
 
 
-def record_auth_failure(request: Request) -> None:
+def record_auth_failure(request: Request, *, reason: str = "invalid_credentials") -> None:
+    from .metrics import AUTH_FAILURES
+
+    AUTH_FAILURES.labels(reason).inc()
     key = get_remote_address(request)
     try:
         _auth_limiter_strategy.hit(_auth_limit_item(), key)

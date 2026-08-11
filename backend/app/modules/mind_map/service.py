@@ -7,11 +7,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ...core.exceptions import AppError
 from ..ai import provider
 from ..ai import repository as ai_repository
+from ..graph_builds import repository as build_status_repository
+from ..graph_builds import service as build_status_service
 from ..notes import repository as notes_repository
 from ..study_history import repository as study_history_repository
 from ..topics import service as topics_service
 from . import repository, structure
 from .exceptions import MindMapParseError, NoMindMapSourceContentError
+
+BUILD_TYPE = "mind_map"
 
 MAX_EVIDENCE_CHARS = 12000
 
@@ -84,12 +88,26 @@ def _extract_json_object(raw: str) -> dict:
     return data
 
 
-def _serialize(mind_map) -> dict:
+def _serialize(mind_map, build_status: dict) -> dict:
     return {
         "structure": mind_map.structure,
         "nodeCount": structure.count_nodes(mind_map.structure),
         "updatedAt": mind_map.updated_at.isoformat(),
+        "buildStatus": build_status,
     }
+
+
+async def request_mind_map_rebuild(db: AsyncSession, topic_id: int, user_id: int) -> dict:
+    """202-shaped: kicks off an async rebuild and returns build status, not
+    the mind map itself. See knowledge_graph.service.request_graph_rebuild
+    for the inline-vs-queued session-reuse rationale."""
+    await topics_service.get_owned_topic_or_404(db, topic_id, user_id)
+    await build_status_repository.set_status(db, topic_id=topic_id, build_type=BUILD_TYPE, status="pending")
+    await db.commit()
+
+    from .jobs import enqueue_mind_map_rebuild
+    await enqueue_mind_map_rebuild(db, topic_id, user_id)
+    return await build_status_service.get_build_status(db, topic_id=topic_id, build_type=BUILD_TYPE)
 
 
 async def rebuild_mind_map(db: AsyncSession, topic_id: int, user_id: int) -> dict:
@@ -116,18 +134,20 @@ async def rebuild_mind_map(db: AsyncSession, topic_id: int, user_id: int) -> dic
         description=f"Built the mind map for: {topic.title}",
     )
     await db.commit()
-    return _serialize(mind_map)
+    build_status = await build_status_service.get_build_status(db, topic_id=topic_id, build_type=BUILD_TYPE)
+    return _serialize(mind_map, build_status)
 
 
 async def get_mind_map(db: AsyncSession, topic_id: int, user_id: int) -> dict:
     await topics_service.get_owned_topic_or_404(db, topic_id, user_id)
+    build_status = await build_status_service.get_build_status(db, topic_id=topic_id, build_type=BUILD_TYPE)
     mind_map = await repository.get_by_topic(db, topic_id)
     if mind_map is None:
-        return {"structure": None, "nodeCount": 0, "updatedAt": None}
+        return {"structure": None, "nodeCount": 0, "updatedAt": None, "buildStatus": build_status}
 
     await study_history_repository.record_activity_safely(
         db, user_id=user_id, topic_id=topic_id, activity_type="mind_map_viewed",
         description="Viewed the mind map",
     )
     await db.commit()
-    return _serialize(mind_map)
+    return _serialize(mind_map, build_status)

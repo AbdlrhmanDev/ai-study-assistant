@@ -32,6 +32,11 @@ def _source_join(stmt):
     )
 
 
+# Safety cap -- spaced-repetition decks accumulate cards indefinitely, so an
+# active topic can otherwise return an unbounded browse-list response.
+_FLASHCARD_LIST_CAP = 500
+
+
 async def list_by_topic(
     db: AsyncSession, topic_id: int, status: str | None = "active"
 ) -> list[tuple[Flashcard, str | None, str | None]]:
@@ -40,7 +45,7 @@ async def list_by_topic(
     ).where(Flashcard.topic_id == topic_id)
     if status:
         stmt = stmt.where(Flashcard.status == status)
-    stmt = stmt.order_by(Flashcard.created_at.desc())
+    stmt = stmt.order_by(Flashcard.created_at.desc()).limit(_FLASHCARD_LIST_CAP)
     result = await db.execute(stmt)
     return [(row.Flashcard, row.source_type, row.source_title) for row in result]
 
@@ -309,3 +314,53 @@ async def retention_for_user(db: AsyncSession, user_id: int) -> tuple[int, int]:
     )
     total, remembered = result.one()
     return total, remembered
+
+
+async def deck_stats_for_user(
+    db: AsyncSession, user_id: int, now: datetime
+) -> tuple[dict[int, dict], dict[int, tuple[int, int]]]:
+    """Load every deck's card and review aggregates in two database queries."""
+    cards_result = await db.execute(
+        select(
+            Flashcard.topic_id,
+            func.count().filter(Flashcard.status == "active"),
+            func.count().filter(
+                (Flashcard.status == "active") & (Flashcard.due_at <= now)
+            ),
+            func.count().filter(
+                (Flashcard.status == "active")
+                & Flashcard.last_rating.in_(["hard", "forgot"])
+            ),
+            func.min(Flashcard.due_at).filter(Flashcard.status == "active"),
+        )
+        .join(Topic, Topic.id == Flashcard.topic_id)
+        .where(Topic.user_id == user_id)
+        .group_by(Flashcard.topic_id)
+    )
+    cards = {
+        topic_id: {
+            "total": total,
+            "due_today": due_today,
+            "difficult": difficult,
+            "next_review_at": next_review_at,
+        }
+        for topic_id, total, due_today, difficult, next_review_at in cards_result.all()
+    }
+
+    reviews_result = await db.execute(
+        select(
+            Flashcard.topic_id,
+            func.count(),
+            func.count().filter(FlashcardReview.rating != "forgot"),
+        )
+        .select_from(FlashcardReview)
+        .join(Flashcard, Flashcard.id == FlashcardReview.flashcard_id)
+        .join(Topic, Topic.id == Flashcard.topic_id)
+        .where(Topic.user_id == user_id)
+        .group_by(Flashcard.topic_id)
+    )
+    reviews = {
+        topic_id: (total, remembered)
+        for topic_id, total, remembered in reviews_result.all()
+    }
+    return cards, reviews

@@ -62,3 +62,52 @@ uvicorn app.main:app --host 0.0.0.0 --port "${PORT:-5000}" --workers 2
 
 Use a rolling or blue/green deployment. FastAPI's lifespan disposes the
 SQLAlchemy connection pool during shutdown.
+
+## Background job worker
+
+Document/note indexing, memory extraction, and knowledge-graph/mind-map
+rebuilds run as durable jobs (`app/core/jobs.py`) once `REDIS_URL` is set --
+without it, they run inline in the request/response cycle instead (fine for
+a single local dev instance, not for production). A durable queue needs a
+**separate, always-running worker process** actually consuming it; nothing
+drains the queue on its own.
+
+Start command (same image, no HTTP server):
+
+```bash
+python -m app.core.jobs
+```
+
+### Railway: running it as a second service
+
+1. In the Railway project, add a new service pointing at the same repo/image
+   as the API service (same `Dockerfile`).
+2. Set that service's config file to `railway.worker.json` (Settings →
+   Config-as-code path, or `RAILWAY_CONFIG_FILE=railway.worker.json` as a
+   service variable). This overrides the container's start command to
+   `python -m app.core.jobs` instead of `docker-entrypoint.sh`, so the
+   worker never runs `alembic upgrade head` itself -- only the API service
+   does, exactly once per release.
+3. Give the worker service the same environment variables as the API
+   service (`DATABASE_URL`, `REDIS_URL`, AI provider keys, `S3_*`,
+   `JOB_QUEUE_NAME`, `JOB_MAX_RETRIES`, etc.) -- it needs the same
+   configuration to do the same work.
+4. No public networking/domain is needed for the worker service; keep it on
+   Railway's private network only.
+5. Verify: enqueue a document upload, then check Railway logs for the worker
+   service for `job_worker_started` followed by `job_completed` log lines
+   (structured JSON, includes `job_id`, `job_type`, `attempt`,
+   `duration_ms`, `final_state`). Restarting the API service mid-upload
+   should not lose the job -- it stays queued in Redis and tracked in the
+   `background_jobs` table until a worker (this one, or a newly deployed
+   replacement) picks it up.
+
+### Operational visibility
+
+`GET /api/v1/admin/jobs/metrics` (admin-only, see `ADMIN_EMAILS`) reports
+queue depth, oldest-queued-job age, running count, failed count, and
+dead-letter count. `GET /api/v1/admin/jobs/dead-letter` lists dead-letter
+jobs with their last error; `POST /api/v1/admin/jobs/{id}/retry` re-queues
+one, `POST /api/v1/admin/jobs/{id}/discard` removes it permanently. A job
+stuck `running` for more than 15 minutes (a worker that crashed mid-job) is
+automatically reset to `queued` the next time any worker starts up.

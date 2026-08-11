@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from functools import lru_cache
 from urllib.parse import urlparse
 
@@ -22,6 +23,23 @@ DEV_CLIENT_ORIGINS = _DOTENV_VALUES.get("CLIENT_ORIGINS") or (
     "http://localhost:3000,http://localhost:3001"
 )
 DEV_SESSION_SECRET = _DOTENV_VALUES.get("SESSION_SECRET") or "development-only-session-secret"
+
+# Per-feature beta caps, overridable per-deployment via AI_FEATURE_LIMITS
+# (JSON, only the features you want to override). Anything omitted keeps
+# these defaults. `daily`/`monthly` are both optional per feature.
+DEFAULT_AI_FEATURE_LIMITS: dict[str, dict[str, int]] = {
+    "chat": {"daily": 60, "monthly": 500},
+    "image_chat": {"daily": 20, "monthly": 150},
+    "embeddings": {"daily": 300, "monthly": 4000},
+    "quiz": {"daily": 15, "monthly": 150},
+    "exam": {"daily": 8, "monthly": 60},
+    "flashcards": {"daily": 15, "monthly": 150},
+    "mind_map": {"daily": 10, "monthly": 80},
+    "knowledge_graph": {"daily": 10, "monthly": 80},
+    "workspace_ai": {"daily": 30, "monthly": 300},
+    "agents": {"daily": 20, "monthly": 200},
+    "coach": {"daily": 10, "monthly": 100},
+}
 
 
 class Settings(BaseSettings):
@@ -76,6 +94,31 @@ class Settings(BaseSettings):
     upload_dir: str = Field("./uploads", alias="UPLOAD_DIR")
     max_upload_mb: int = Field(20, alias="MAX_UPLOAD_MB", ge=1)
     storage_backend: str = Field("local", alias="STORAGE_BACKEND")
+    s3_bucket: str = Field("", alias="S3_BUCKET")
+    s3_region: str = Field("auto", alias="S3_REGION")
+    s3_endpoint_url: str = Field("", alias="S3_ENDPOINT_URL")
+    s3_access_key_id: str = Field("", alias="S3_ACCESS_KEY_ID")
+    s3_secret_access_key: str = Field("", alias="S3_SECRET_ACCESS_KEY")
+    signed_url_ttl_seconds: int = Field(900, alias="SIGNED_URL_TTL_SECONDS", ge=60, le=86400)
+    # A document stuck in pending/processing past this many minutes (crashed
+    # worker, browser closed mid-upload before storage.save() completed) is
+    # swept by cleanup.sweep_abandoned_uploads and marked failed.
+    abandoned_upload_minutes: int = Field(60, alias="ABANDONED_UPLOAD_MINUTES", ge=1)
+    clamav_host: str = Field("", alias="CLAMAV_HOST")
+    clamav_port: int = Field(3310, alias="CLAMAV_PORT", ge=1, le=65535)
+    malware_scan_required: bool = Field(False, alias="MALWARE_SCAN_REQUIRED")
+
+    # Durable jobs, monitoring, and beta quotas.
+    job_queue_name: str = Field("studia:jobs", alias="JOB_QUEUE_NAME")
+    job_max_retries: int = Field(4, alias="JOB_MAX_RETRIES", ge=1, le=20)
+    sentry_dsn: str = Field("", alias="SENTRY_DSN")
+    slow_query_ms: int = Field(500, alias="SLOW_QUERY_MS", ge=1)
+    ai_monthly_request_limit: int = Field(500, alias="AI_MONTHLY_REQUEST_LIMIT", ge=1)
+    ai_feature_limits_raw: str = Field("", alias="AI_FEATURE_LIMITS")
+    soft_limit_warning_threshold: float = Field(
+        0.8, alias="SOFT_LIMIT_WARNING_THRESHOLD", ge=0.0, le=1.0
+    )
+    admin_emails: str = Field("", alias="ADMIN_EMAILS")
 
     @field_validator("ai_provider")
     @classmethod
@@ -94,12 +137,21 @@ class Settings(BaseSettings):
     @field_validator("storage_backend")
     @classmethod
     def validate_storage_backend(cls, value: str) -> str:
-        if value != "local":
-            raise ValueError(
-                "STORAGE_BACKEND only supports 'local' today; "
-                "an object-storage backend is a documented future addition"
-            )
+        if value not in {"local", "s3"}:
+            raise ValueError("STORAGE_BACKEND must be local or s3")
         return value
+
+    @field_validator("redis_url", mode="before")
+    @classmethod
+    def normalize_redis_url(cls, value: object) -> str:
+        normalized = str(value or "").strip()
+        # Railway resolves `${{Service.VARIABLE}}` itself. In a local .env,
+        # python-dotenv can reduce that unresolved reference to a lone `}`.
+        if normalized == "}" or normalized.startswith("${{"):
+            return ""
+        if normalized and urlparse(normalized).scheme not in {"redis", "rediss", "memory"}:
+            raise ValueError("REDIS_URL must start with redis:// or rediss://")
+        return normalized
 
     @model_validator(mode="after")
     def validate_origins(self) -> "Settings":
@@ -141,6 +193,14 @@ class Settings(BaseSettings):
                 f"The API key for EMBEDDING_PROVIDER={self.embedding_provider} "
                 "is required in production"
             )
+        if self.storage_backend != "s3":
+            problems.append("STORAGE_BACKEND must be s3 in production")
+        elif not all((self.s3_bucket, self.s3_access_key_id, self.s3_secret_access_key)):
+            problems.append("S3_BUCKET and S3 credentials are required in production")
+        if not self.redis_url:
+            problems.append("REDIS_URL is required in production for durable jobs")
+        if self.malware_scan_required and not self.clamav_host:
+            problems.append("CLAMAV_HOST is required when MALWARE_SCAN_REQUIRED=true")
 
         if problems:
             raise ValueError(
@@ -161,6 +221,20 @@ class Settings(BaseSettings):
         if self.log_level_raw:
             return self.log_level_raw
         return "info" if self.is_production else "debug"
+
+    @property
+    def feature_limits(self) -> dict[str, dict[str, int]]:
+        merged = {key: dict(value) for key, value in DEFAULT_AI_FEATURE_LIMITS.items()}
+        if self.ai_feature_limits_raw:
+            try:
+                overrides = json.loads(self.ai_feature_limits_raw)
+            except (json.JSONDecodeError, TypeError):
+                overrides = {}
+            if isinstance(overrides, dict):
+                for feature, limits in overrides.items():
+                    if isinstance(limits, dict):
+                        merged.setdefault(feature, {}).update(limits)
+        return merged
 
     @property
     def max_upload_bytes(self) -> int:

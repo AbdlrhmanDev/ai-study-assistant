@@ -11,7 +11,6 @@ import {
   Clock,
   Download,
   FileText,
-  ListChecks,
   Pencil,
   Play,
   Plus,
@@ -29,8 +28,10 @@ import {
   documentTypeBadge,
   humanizeFilename,
   useAuthFailure,
-} from "./BackendPages";
-import { api, downloadFile, Note, Pagination, Topic, messageFromError } from "../lib/api";
+} from "./shared/PageChrome";
+import { DashboardFlashcardStats, formatRelativeDue } from "./shared/dashboardShared";
+import { api, downloadFile, idempotencyHeader, Note, Pagination, Topic, messageFromError } from "../lib/api";
+import { Badge, Button, Card, EmptyState, LoadingState } from "./ui";
 
 export type FlashcardRating = "easy" | "medium" | "hard" | "forgot";
 export type FlashcardOrigin = "manual" | "ai";
@@ -67,27 +68,12 @@ type DeckStats = {
   next_review_at: string | null;
 };
 
-export type DashboardFlashcardStats = {
-  due_today: number;
-  difficult: number;
-  retention_rate: number | null;
-  next_review_at: string | null;
-};
-
 const RATING_OPTIONS: { value: FlashcardRating; label: string; className: string }[] = [
   { value: "forgot", label: "I forgot", className: "rating-forgot" },
   { value: "hard", label: "Hard", className: "rating-hard" },
   { value: "medium", label: "Medium", className: "rating-medium" },
   { value: "easy", label: "Easy", className: "rating-easy" },
 ];
-
-export function formatRelativeDue(dueAt: string | null): string {
-  if (!dueAt) return "No cards yet";
-  const diffDays = Math.round((new Date(dueAt).getTime() - Date.now()) / 86400000);
-  if (diffDays <= 0) return "Due now";
-  if (diffDays === 1) return "Tomorrow";
-  return `In ${diffDays} days`;
-}
 
 function sourceLabel(card: Pick<Flashcard, "sourceType" | "sourceTitle">): string | null {
   if (!card.sourceTitle) return null;
@@ -113,20 +99,13 @@ export function FlashcardsPage() {
     try {
       const topicsResult = await api<{ topics: Topic[] }>("/topics");
       setTopics(topicsResult.topics);
-      const [summaryResult, statsResults] = await Promise.all([
+      const [summaryResult, statsResult] = await Promise.all([
         api<DashboardFlashcardStats>("/flashcards/stats-summary"),
-        Promise.all(
-          topicsResult.topics.map((topic) =>
-            api<DeckStats>(`/topics/${topic.id}/flashcards/stats`).catch(() => null),
-          ),
-        ),
+        api<{ stats: DeckStats[] }>("/flashcards/stats-by-topic"),
       ]);
       setSummary(summaryResult);
       const statsMap: Record<number, DeckStats> = {};
-      topicsResult.topics.forEach((topic, index) => {
-        const stats = statsResults[index];
-        if (stats) statsMap[topic.id] = stats;
-      });
+      statsResult.stats.forEach((stats) => { statsMap[stats.topic_id] = stats; });
       setDeckStats(statsMap);
     } catch (requestError) {
       handleAuthFailure(requestError);
@@ -143,6 +122,7 @@ export function FlashcardsPage() {
 
   return (
     <PageShell
+      className="flashcards-page"
       title="Flashcards"
       subtitle="Spaced-repetition review, generated from your notes and documents or written by hand."
     >
@@ -167,40 +147,31 @@ export function FlashcardsPage() {
           </article>
         </div>
       )}
-      {loading ? <div className="empty">Loading your decks…</div> : (
+      {loading ? <LoadingState label="Loading your decks…" /> : (
         <div className="deck-grid">
           {topics.map((topic) => {
             const stats = deckStats[topic.id];
             return (
-              <article className="deck-card" key={topic.id}>
+              <Card className="deck-card collection-card" interactive key={topic.id}>
                 <span className="topic-icon purple"><BookOpen size={18} strokeWidth={1.8} /></span>
                 <h2>{topic.title}</h2>
                 <p>{stats ? `${stats.total} card${stats.total === 1 ? "" : "s"}` : "Loading…"}</p>
                 {stats && (
                   <div className="deck-card-stats">
-                    <span className={`deck-stat-pill${stats.due_today ? " due" : ""}`}>{stats.due_today} due</span>
-                    {stats.difficult > 0 && <span className="deck-stat-pill difficult">{stats.difficult} tough</span>}
-                    {stats.retention_rate != null && <span className="deck-stat-pill">{stats.retention_rate}% retention</span>}
+                    <Badge tone={stats.due_today ? "accent" : "neutral"}>{stats.due_today} due</Badge>
+                    {stats.difficult > 0 && <Badge tone="warning">{stats.difficult} tough</Badge>}
+                    {stats.retention_rate != null && <Badge tone="success">{stats.retention_rate}% retention</Badge>}
                   </div>
                 )}
                 <div className="deck-card-actions">
-                  <Link className="button button-secondary" href={`/flashcards/deck?topicId=${topic.id}`}>Manage</Link>
-                  <Link
-                    className={`button ${stats?.due_today ? "button-primary" : "button-secondary"}`}
-                    href={`/flashcards/review?topicId=${topic.id}`}
-                  >
-                    Review{stats?.due_today ? ` (${stats.due_today})` : ""}
-                  </Link>
+                  <Button variant="secondary" href={`/flashcards/deck?topicId=${topic.id}`}>Manage deck</Button>
+                  {!!stats?.total && <Button variant={stats.due_today ? "primary" : "secondary"} href={`/flashcards/review?topicId=${topic.id}`}>Review{stats.due_today ? ` (${stats.due_today})` : ""}</Button>}
                 </div>
-              </article>
+                {stats?.total === 0 && <div className="deck-zero-state">No cards yet. Open this deck to add a card or generate a set from your notes.</div>}
+              </Card>
             );
           })}
-          {!topics.length && (
-            <div className="empty">
-              Create a topic and add notes or documents, then generate your first flashcards.
-              <div><Link className="button button-primary" href="/topics">Create topic</Link></div>
-            </div>
-          )}
+          {!topics.length && <EmptyState Icon={StickyNote} title="No flashcard decks yet" description="Create a topic and add notes or documents, then generate your first flashcards." action={<Button variant="primary" href="/topics">Create topic</Button>} />}
         </div>
       )}
     </PageShell>
@@ -314,6 +285,7 @@ export function FlashcardsDeckPage() {
     try {
       const result = await api<{ flashcards: Flashcard[] }>(`/topics/${topicId}/flashcards/generate`, {
         method: "POST",
+        headers: idempotencyHeader(),
         body: JSON.stringify({
           source: generateSource,
           count: Number(data.get("count")) || 8,
@@ -415,6 +387,7 @@ export function FlashcardsDeckPage() {
 
   return (
     <PageShell
+      className="flashcard-deck-page"
       title={topic?.title ?? "Flashcards"}
       subtitle="Manage this deck's cards, or start a review session."
       action={<div className="page-actions">
@@ -447,12 +420,12 @@ export function FlashcardsDeckPage() {
       <section className="notes-panel flashcards-panel">
         <div className="section-head">
           <div className="filter-pills">
-            <button className={statusFilter === "active" ? "active" : ""} onClick={() => setStatusFilter("active")}>Active</button>
-            <button className={statusFilter === "archived" ? "active" : ""} onClick={() => setStatusFilter("archived")}>Archived</button>
+            <button aria-pressed={statusFilter === "active"} className={statusFilter === "active" ? "active" : ""} onClick={() => setStatusFilter("active")}>Active</button>
+            <button aria-pressed={statusFilter === "archived"} className={statusFilter === "archived" ? "active" : ""} onClick={() => setStatusFilter("archived")}>Archived</button>
           </div>
           <div className="page-actions">
-            <button className="add-note-button" onClick={() => setShowAdd(true)}><Plus size={14} strokeWidth={2.2} /> Add card</button>
-            <button className="add-note-button" onClick={() => setShowGenerate(true)}><Sparkles size={14} /> Generate with AI</button>
+            <button className="add-note-button add-card-action" onClick={() => setShowAdd(true)}><Plus size={14} strokeWidth={2.2} /> Add card</button>
+            <button className="add-note-button generate-cards-action" onClick={() => setShowGenerate(true)}><Sparkles size={14} /> Generate with AI</button>
           </div>
         </div>
         {loading ? <div className="empty">Loading cards…</div> : (
@@ -513,11 +486,12 @@ export function FlashcardsDeckPage() {
 
       {showAdd && (
         <div className="modal-backdrop" onMouseDown={() => setShowAdd(false)}>
-          <form role="dialog" aria-modal="true" className="topic-modal note-modal action-modal" onSubmit={createCard} onMouseDown={(event) => event.stopPropagation()}>
-            <button type="button" className="modal-close" onClick={() => setShowAdd(false)}><X size={20} /></button>
-            <div className="modal-icon edit-icon"><Plus size={22} strokeWidth={2.2} /></div>
-            <div className="eyebrow">ADD A FLASHCARD</div>
-            <h2>New flashcard</h2>
+          <form role="dialog" aria-modal="true" aria-labelledby="new-flashcard-title" className="topic-modal note-modal action-modal flashcard-add-modal" onSubmit={createCard} onMouseDown={(event) => event.stopPropagation()}>
+            <button type="button" className="modal-close" aria-label="Close" onClick={() => setShowAdd(false)}><X size={20} /></button>
+            <div className="flashcard-modal-heading">
+              <div className="modal-icon edit-icon"><Plus size={22} strokeWidth={2.2} /></div>
+              <div><div className="eyebrow">ADD A FLASHCARD</div><h2 id="new-flashcard-title">New flashcard</h2></div>
+            </div>
             {actionError && <p className="form-error">{actionError}</p>}
             <label>Question<textarea name="question" required rows={2} maxLength={2000} autoFocus /></label>
             <label>Answer<textarea name="answer" required rows={2} maxLength={4000} /></label>
@@ -551,12 +525,13 @@ export function FlashcardsDeckPage() {
 
       {showGenerate && (
         <div className="modal-backdrop" onMouseDown={() => setShowGenerate(false)}>
-          <form role="dialog" aria-modal="true" className="topic-modal action-modal" onSubmit={generateCards} onMouseDown={(event) => event.stopPropagation()}>
-            <button type="button" className="modal-close" onClick={() => setShowGenerate(false)}><X size={20} /></button>
-            <div className="modal-icon edit-icon"><Sparkles size={22} /></div>
-            <div className="eyebrow">GENERATE WITH AI</div>
-            <h2>Generate flashcards</h2>
-            <p>The tutor will read the selected material and draft question/answer/explanation cards.</p>
+          <form role="dialog" aria-modal="true" aria-labelledby="generate-flashcards-title" className="topic-modal action-modal flashcard-generate-modal" onSubmit={generateCards} onMouseDown={(event) => event.stopPropagation()}>
+            <button type="button" className="modal-close" aria-label="Close" onClick={() => setShowGenerate(false)}><X size={20} /></button>
+            <div className="flashcard-modal-heading">
+              <div className="modal-icon edit-icon"><Sparkles size={22} /></div>
+              <div><div className="eyebrow">GENERATE WITH AI</div><h2 id="generate-flashcards-title">Generate flashcards</h2></div>
+            </div>
+            <p className="flashcard-modal-intro">The tutor will read the selected material and draft question, answer, and explanation cards.</p>
             {actionError && <p className="form-error">{actionError}</p>}
             <div className="generate-source-options">
               <label className="check">
@@ -604,7 +579,7 @@ export function FlashcardsDeckPage() {
       {editingCard && (
         <div className="modal-backdrop" onMouseDown={() => setEditingCard(null)}>
           <form role="dialog" aria-modal="true" className="topic-modal note-modal action-modal" onSubmit={updateCard} onMouseDown={(event) => event.stopPropagation()}>
-            <button type="button" className="modal-close" onClick={() => setEditingCard(null)}><X size={20} /></button>
+            <button type="button" className="modal-close" aria-label="Close" onClick={() => setEditingCard(null)}><X size={20} /></button>
             <div className="modal-icon edit-icon"><Pencil size={22} /></div>
             <div className="eyebrow">REFINE THIS CARD</div>
             <h2>Edit flashcard</h2>
@@ -623,7 +598,7 @@ export function FlashcardsDeckPage() {
       {deletingCard && (
         <div className="modal-backdrop" onMouseDown={() => (savingAction ? null : setDeletingCard(null))}>
           <div role="alertdialog" aria-modal="true" className="topic-modal action-modal delete-modal" onMouseDown={(event) => event.stopPropagation()}>
-            <button type="button" className="modal-close" disabled={savingAction} onClick={() => setDeletingCard(null)}><X size={20} /></button>
+            <button type="button" className="modal-close" aria-label="Close" disabled={savingAction} onClick={() => setDeletingCard(null)}><X size={20} /></button>
             <div className="modal-icon delete-icon"><Trash2 size={22} /></div>
             <div className="eyebrow">REMOVE THIS CARD</div>
             <h2>Delete this flashcard?</h2>
@@ -718,6 +693,7 @@ export function FlashcardsReviewPage() {
 
   return (
     <PageShell
+      className="flashcard-review-page"
       title={topic ? `Review: ${topic.title}` : "Review"}
       subtitle="Rate each card honestly — it decides when you'll see it again."
       action={<Link className="back-topics" href="/flashcards"><ArrowLeft size={13} /> All decks</Link>}
@@ -751,7 +727,7 @@ export function FlashcardsReviewPage() {
             )}
           </article>
           {!revealed ? (
-            <button className="button button-primary review-reveal" type="button" onClick={() => setRevealed(true)}>Show answer</button>
+            <button className="button button-primary review-reveal" type="button" aria-expanded={revealed} onClick={() => setRevealed(true)}>Show answer</button>
           ) : (
             <div className="review-ratings">
               {RATING_OPTIONS.map((option) => (

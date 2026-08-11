@@ -107,4 +107,8 @@ class StudyPlanTask(Base):
     __table_args__ = (
         CheckConstraint(f"status IN {TASK_STATUSES}", name="study_plan_tasks_status_check"),
         Index("study_plan_tasks_plan_id_index", "plan_id"),
+        # Without this, deleting a topic (ON DELETE CASCADE from topics ->
+        # study_plan_tasks) forces a sequential scan of this table to find
+        # the rows to cascade to, since topic_id is otherwise unindexed.
+        Index("study_plan_tasks_topic_id_index", "topic_id"),
     )

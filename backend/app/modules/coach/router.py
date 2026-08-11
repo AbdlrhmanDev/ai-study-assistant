@@ -9,6 +9,12 @@ from .schema import StudyGoalIn, TaskStatusIn
 router = APIRouter(tags=["coach"])
 
 
+@router.get("/coach/goals")
+async def list_study_goals(db: DbSession, user: CurrentUser):
+    goals = await service.list_goals(db, user["id"])
+    return {"goals": [service.serialize_goal(goal) for goal in goals]}
+
+
 @router.get("/topics/{topic_id}/study-goal")
 async def get_study_goal(topic_id: int, db: DbSession, user: CurrentUser):
     return await service.get_study_goal(db, topic_id, user["id"])

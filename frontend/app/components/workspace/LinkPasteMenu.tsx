@@ -25,7 +25,6 @@ export default function LinkPasteMenu({ url, anchorRect, open, onClose, onChoose
 
   // Genuinely fetches from an external API when `url` changes; there's no
   // render-time equivalent for starting an async request.
-  /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
     if (!open || !url) return;
     setPreview(null);
@@ -36,7 +35,6 @@ export default function LinkPasteMenu({ url, anchorRect, open, onClose, onChoose
       .catch((requestError) => setError(messageFromError(requestError)))
       .finally(() => setLoading(false));
   }, [open, url]);
-  /* eslint-enable react-hooks/set-state-in-effect */
 
   if (!open || !url) return null;
 

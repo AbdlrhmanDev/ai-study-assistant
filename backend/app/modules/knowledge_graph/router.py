@@ -11,9 +11,9 @@ async def get_graph(topic_id: int, db: DbSession, user: CurrentUser):
     return await service.get_graph(db, topic_id, user["id"])
 
 
-@router.post("/topics/{topic_id}/knowledge-graph/rebuild", status_code=status.HTTP_201_CREATED)
+@router.post("/topics/{topic_id}/knowledge-graph/rebuild", status_code=status.HTTP_202_ACCEPTED)
 async def rebuild_graph(topic_id: int, db: DbSession, user: CurrentUser):
-    return await service.rebuild_graph(db, topic_id, user["id"])
+    return await service.request_graph_rebuild(db, topic_id, user["id"])
 
 
 @router.get("/concepts/{concept_id}")
