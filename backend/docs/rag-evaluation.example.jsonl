@@ -1,2 +1,2 @@
-{"topic_id": 1, "query": "What is the purpose of a primary key?", "relevant_source_ids": [1]}
-{"topic_id": 1, "query": "Explain when to use a LEFT JOIN", "relevant_source_ids": [2]}
+{"topic_title": "Biology Foundations", "query": "How do plants convert sunlight into energy?", "relevant_source_titles": ["Photosynthesis"]}
+{"topic_title": "Biology Foundations", "query": "What is homeostasis?", "relevant_source_titles": ["Homeostasis"]}
