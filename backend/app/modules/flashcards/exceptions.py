@@ -33,3 +33,15 @@ class FlashcardNotRegeneratableError(AppError):
         super().__init__(
             "This card has no linked note or document, so it can't be regenerated", 409
         )
+
+
+class EmptyFlashcardImportError(AppError):
+    def __init__(self) -> None:
+        super().__init__(
+            "No valid flashcards found in that file -- each row needs at least a question and an answer", 422
+        )
+
+
+class FlashcardImportTooLargeError(AppError):
+    def __init__(self, max_rows: int) -> None:
+        super().__init__(f"That file has more than {max_rows} rows -- split it into smaller batches", 413)

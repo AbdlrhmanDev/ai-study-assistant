@@ -1,7 +1,7 @@
-from sqlalchemy import Select, select
+from sqlalchemy import Select, delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .model import WorkspacePage
+from .model import WorkspacePage, WorkspacePageVersion
 
 
 def _owned_query(user_id: int) -> Select:
@@ -63,3 +63,67 @@ async def set_topic(db: AsyncSession, page: WorkspacePage, topic_id: int | None)
 
 async def delete(db: AsyncSession, page: WorkspacePage) -> None:
     await db.delete(page)
+
+
+# --------------------------------------------------------------------------
+# Version history / recovery snapshots
+# --------------------------------------------------------------------------
+
+# Keep a bounded trail per page -- recovery snapshots, not a full audit log.
+MAX_VERSIONS_PER_PAGE = 50
+
+
+async def get_latest_version(db: AsyncSession, workspace_page_id: int) -> WorkspacePageVersion | None:
+    stmt = (
+        select(WorkspacePageVersion)
+        .where(WorkspacePageVersion.workspace_page_id == workspace_page_id)
+        .order_by(WorkspacePageVersion.created_at.desc())
+        .limit(1)
+    )
+    result = await db.execute(stmt)
+    return result.scalar_one_or_none()
+
+
+async def create_version(
+    db: AsyncSession, *, workspace_page_id: int, title: str, blocks: list[dict]
+) -> WorkspacePageVersion:
+    version = WorkspacePageVersion(workspace_page_id=workspace_page_id, title=title, blocks=blocks)
+    db.add(version)
+    await db.flush()
+
+    # Prune anything past the cap, oldest first.
+    stale_ids_stmt = (
+        select(WorkspacePageVersion.id)
+        .where(WorkspacePageVersion.workspace_page_id == workspace_page_id)
+        .order_by(WorkspacePageVersion.created_at.desc())
+        .offset(MAX_VERSIONS_PER_PAGE)
+    )
+    stale_ids = (await db.execute(stale_ids_stmt)).scalars().all()
+    if stale_ids:
+        await db.execute(delete(WorkspacePageVersion).where(WorkspacePageVersion.id.in_(stale_ids)))
+
+    await db.refresh(version)
+    return version
+
+
+async def list_versions_for_page(
+    db: AsyncSession, workspace_page_id: int
+) -> list[WorkspacePageVersion]:
+    stmt = (
+        select(WorkspacePageVersion)
+        .where(WorkspacePageVersion.workspace_page_id == workspace_page_id)
+        .order_by(WorkspacePageVersion.created_at.desc())
+    )
+    result = await db.execute(stmt)
+    return list(result.scalars().all())
+
+
+async def get_version_for_page(
+    db: AsyncSession, version_id: int, workspace_page_id: int
+) -> WorkspacePageVersion | None:
+    stmt = select(WorkspacePageVersion).where(
+        WorkspacePageVersion.id == version_id,
+        WorkspacePageVersion.workspace_page_id == workspace_page_id,
+    )
+    result = await db.execute(stmt)
+    return result.scalar_one_or_none()

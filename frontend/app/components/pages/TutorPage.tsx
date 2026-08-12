@@ -18,6 +18,8 @@ import {
   Swords,
   Trash2,
   Trophy,
+  ThumbsDown,
+  ThumbsUp,
   X,
 } from "lucide-react";
 import {
@@ -61,6 +63,34 @@ type AiMessage = {
 };
 
 type SparVerdict = "open" | "continue" | "concede";
+
+function AnswerRating({ messageId }: { messageId: number }) {
+  const [rating, setRating] = useState<-1 | 1 | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  async function rate(next: -1 | 1) {
+    if (saving) return;
+    setSaving(true);
+    try {
+      await api(`/ai/messages/${messageId}/feedback`, {
+        method: "PUT",
+        body: JSON.stringify({ rating: next, reason: next === 1 ? "helpful" : "unclear" }),
+      });
+      setRating(next);
+    } catch {
+      // Keep the conversation usable if feedback telemetry is temporarily
+      // unavailable (for example while an older backend is restarting).
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return <div className="answer-rating" aria-label="Rate this answer">
+    <span>{rating ? "Thanks for your feedback" : "Was this helpful?"}</span>
+    <button className={rating === 1 ? "selected" : ""} type="button" disabled={saving} onClick={() => void rate(1)} aria-label="Helpful answer"><ThumbsUp size={14} /></button>
+    <button className={rating === -1 ? "selected" : ""} type="button" disabled={saving} onClick={() => void rate(-1)} aria-label="Unhelpful answer"><ThumbsDown size={14} /></button>
+  </div>;
+}
 
 type AgentMessage = {
   id: number;
@@ -760,22 +790,36 @@ export function TutorPage() {
                               <div className="message-sources">
                                 <span className="message-sources-label">Sources</span>
                                 {message.sources.map((source, index) => (
-                                  <span
+                                  <button
+                                    type="button"
                                     className={`source-chip ${source.sourceType}`}
                                     key={`${source.sourceType}-${source.sourceId}-${index}`}
                                     title={source.excerpt}
+                                    onClick={() => {
+                                      void api(`/ai/messages/${message.id}/sources/click`, {
+                                        method: "POST",
+                                        body: JSON.stringify({
+                                          sourceType: source.sourceType,
+                                          sourceId: source.sourceId,
+                                          score: source.score,
+                                        }),
+                                      }).catch(() => {
+                                        // click telemetry is best-effort
+                                      });
+                                    }}
                                   >
                                     {source.sourceType === "note" ? <StickyNote size={11} /> : <FileText size={11} />}{" "}
                                     {source.sourceType === "document"
                                       ? humanizeFilename(source.sourceTitle).label
                                       : source.sourceTitle}
-                                  </span>
+                                  </button>
                                 ))}
                               </div>
                             )}
                             {message.role === "assistant" && message.usedMemory && (
                               <span className="memory-used-badge" title="Shaped by what Studia remembers about you"><Brain size={11} /> remembered</span>
                             )}
+                            {message.role === "assistant" && message.id > 0 && <AnswerRating messageId={message.id} />}
                         </MessageBubble>
                       ))}
                       {sending && <TypingIndicator />}

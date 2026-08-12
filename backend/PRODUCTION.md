@@ -111,3 +111,25 @@ jobs with their last error; `POST /api/v1/admin/jobs/{id}/retry` re-queues
 one, `POST /api/v1/admin/jobs/{id}/discard` removes it permanently. A job
 stuck `running` for more than 15 minutes (a worker that crashed mid-job) is
 automatically reset to `queued` the next time any worker starts up.
+
+## Phase 3 growth operations
+
+Model routing is configured with `AI_FEATURE_PROVIDERS`, a JSON map from
+feature to provider. Providers without a configured API key are skipped and
+the normal fallback chain remains active. Example:
+
+```text
+AI_FEATURE_PROVIDERS={"chat":"openai","quiz":"groq","flashcards":"groq","mind_map":"gemini"}
+```
+
+Run the review-reminder sweep hourly using Railway Cron (no public domain):
+
+```bash
+python -m app.core.jobs --reminders
+```
+
+Set `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`,
+`SMTP_FROM_EMAIL`, and `APP_PUBLIC_URL`. Students must opt in from Settings;
+delivery is deduplicated per student/local day. The admin-only
+`GET /api/v1/analytics/funnel?days=30` endpoint reports distinct users by
+activation stage and aggregate AI-answer approval rate.

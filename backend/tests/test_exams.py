@@ -137,6 +137,64 @@ async def test_full_attempt_flow_grades_objective_and_rubric(
     assert result["score"] == 83.3
 
 
+async def test_exam_analytics_reports_per_question_points(
+    authed_client: AsyncClient, db_session: AsyncSession, test_user: User, mock_ai_generate
+):
+    mock_ai_generate(MOCK_EXAM_RESPONSE)
+    topic = await _create_topic_with_note(db_session, test_user)
+    generated = await _generate_exam(authed_client, topic.id)
+    exam_id = generated["exam"]["id"]
+    mc_question, essay_question = generated["questions"]
+
+    attempt_response = await authed_client.post(f"/api/v1/exams/{exam_id}/attempts")
+    attempt_id = attempt_response.json()["attempt"]["id"]
+    await authed_client.post(
+        f"/api/v1/exams/attempts/{attempt_id}/answers",
+        json={"questionId": mc_question["id"], "answer": {"index": 0}},
+    )
+    await authed_client.post(
+        f"/api/v1/exams/attempts/{attempt_id}/answers",
+        json={"questionId": essay_question["id"], "answer": {"text": "Chlorophyll absorbs sunlight and converts it to energy."}},
+    )
+    mock_ai_generate(MOCK_RUBRIC_GRADING_RESPONSE)
+    await authed_client.post(f"/api/v1/exams/attempts/{attempt_id}/submit")
+
+    response = await authed_client.get(f"/api/v1/exams/{exam_id}/analytics")
+
+    assert response.status_code == 200, response.text
+    stats = {entry["questionId"]: entry for entry in response.json()["questions"]}
+    assert stats[mc_question["id"]]["timesAnswered"] == 1
+    assert stats[mc_question["id"]]["averageScore"] == 1.0
+    assert stats[essay_question["id"]]["averageScore"] == round(4 / 5, 3)
+
+
+async def test_generate_exam_avoids_repeating_existing_topic_questions(
+    authed_client: AsyncClient, db_session: AsyncSession, test_user: User, mock_ai_generate
+):
+    mock_ai_generate(MOCK_EXAM_RESPONSE)
+    topic = await _create_topic_with_note(db_session, test_user)
+    await _generate_exam(authed_client, topic.id)  # seeds two existing prompts
+
+    duplicate_and_new = json.dumps([
+        json.loads(MOCK_EXAM_RESPONSE)[0],  # exact duplicate prompt
+        {
+            "type": "true_false", "bloomsLevel": "remember", "concept": "Photosynthesis",
+            "prompt": "Chlorophyll is found in chloroplasts.", "correctValue": True,
+            "explanation": "Chloroplasts contain chlorophyll.", "sourceIndex": 1,
+        },
+    ])
+    mock_ai_generate(duplicate_and_new)
+
+    second = await authed_client.post(
+        f"/api/v1/topics/{topic.id}/exams/generate", json={"count": 4, "timeLimitMinutes": 30}
+    )
+
+    assert second.status_code == 201, second.text
+    prompts = [q["prompt"] for q in second.json()["questions"]]
+    assert "What pigment absorbs light?" not in prompts
+    assert "Chlorophyll is found in chloroplasts." in prompts
+
+
 async def test_delete_exam_removes_it(
     authed_client: AsyncClient, db_session: AsyncSession, test_user: User, mock_ai_generate
 ):

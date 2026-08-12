@@ -11,6 +11,7 @@ from ...modules.export.router import router as export_router
 from ...modules.flashcards.router import router as flashcards_router
 from ...modules.gamification.router import router as gamification_router
 from ...modules.goal_prediction.router import router as goal_prediction_router
+from ...modules.growth.router import router as growth_router
 from ...modules.jobs.router import router as jobs_router
 from ...modules.knowledge_graph.router import router as knowledge_graph_router
 from ...modules.learning_style.router import router as learning_style_router
@@ -19,6 +20,7 @@ from ...modules.mastery.router import router as mastery_router
 from ...modules.memory.router import router as memory_router
 from ...modules.mind_map.router import router as mind_map_router
 from ...modules.notes.router import router as notes_router
+from ...modules.plans.router import router as plans_router
 from ...modules.quizzes.router import router as quizzes_router
 from ...modules.study_history.router import router as study_history_router
 from ...modules.study_insights.router import router as study_insights_router
@@ -45,6 +47,7 @@ api_router.include_router(export_router)
 api_router.include_router(flashcards_router)
 api_router.include_router(gamification_router)
 api_router.include_router(goal_prediction_router)
+api_router.include_router(growth_router)
 api_router.include_router(jobs_router)
 api_router.include_router(knowledge_graph_router)
 api_router.include_router(learning_style_router)
@@ -52,6 +55,7 @@ api_router.include_router(link_preview_router)
 api_router.include_router(mastery_router)
 api_router.include_router(memory_router)
 api_router.include_router(mind_map_router)
+api_router.include_router(plans_router)
 api_router.include_router(quizzes_router)
 api_router.include_router(study_history_router)
 api_router.include_router(study_insights_router)

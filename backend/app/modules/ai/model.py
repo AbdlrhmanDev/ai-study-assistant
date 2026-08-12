@@ -37,6 +37,30 @@ class ChatMessage(Base):
     )
 
 
+class MessageFeedback(Base):
+    """A thumbs-up/down rating on one assistant answer -- one row per
+    message (re-rating overwrites, not duplicates)."""
+
+    __tablename__ = "message_feedback"
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
+    message_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("chat_messages.id", ondelete="CASCADE"), nullable=False, unique=True
+    )
+    rating: Mapped[int] = mapped_column(nullable=False)
+    reason: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+
+    __table_args__ = (
+        CheckConstraint("rating IN (-1, 1)", name="message_feedback_rating_check"),
+    )
+
+
 class Document(Base):
     """An uploaded study document (PDF/text), scoped to a topic."""
 
@@ -50,6 +74,7 @@ class Document(Base):
     original_filename: Mapped[str] = mapped_column(String(255), nullable=False)
     content_type: Mapped[str] = mapped_column(String(100), nullable=False)
     storage_path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    file_size_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     extracted_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(String(20), nullable=False, server_default="pending")
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -71,8 +96,9 @@ class Document(Base):
 
 
 class DocumentChunk(Base):
-    """A chunk of text (from a note OR an uploaded document) plus its
-    embedding, used for hybrid (vector + BM25) retrieval."""
+    """A chunk of text (from a note, an uploaded document, OR a topic-linked
+    workspace page) plus its embedding, used for hybrid (vector + BM25)
+    retrieval."""
 
     __tablename__ = "document_chunks"
 
@@ -86,24 +112,37 @@ class DocumentChunk(Base):
     document_id: Mapped[int | None] = mapped_column(
         BigInteger, ForeignKey("documents.id", ondelete="CASCADE"), nullable=True
     )
+    # Only topic-linked pages can feed RAG -- retrieval is always scoped to a
+    # topic, so an unlinked page has nowhere to be retrieved from. See
+    # workspace/service.py::update_page/link_topic, which re-index on every
+    # content or topic-link change.
+    workspace_page_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("workspace_pages.id", ondelete="CASCADE"), nullable=True
+    )
     chunk_index: Mapped[int] = mapped_column(nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     # Nullable: if the embedding provider fails at write time, the chunk is
     # still stored (and remains findable via BM25) rather than being lost.
     embedding: Mapped[list[float] | None] = mapped_column(Vector(_EMBEDDING_DIM), nullable=True)
+    # "{provider}:{model}" that produced `embedding`, e.g. "gemini:gemini-embedding-001".
+    # Null whenever `embedding` is null. Lets a re-index sweep find chunks
+    # whose vector was produced by a provider/model that's since changed --
+    # a bare content diff can't detect that, since the text itself didn't change.
+    embedding_model: Mapped[str | None] = mapped_column(nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
 
     __table_args__ = (
         CheckConstraint(
-            "(note_id IS NOT NULL AND document_id IS NULL) OR "
-            "(note_id IS NULL AND document_id IS NOT NULL)",
+            "(note_id IS NOT NULL)::int + (document_id IS NOT NULL)::int + "
+            "(workspace_page_id IS NOT NULL)::int = 1",
             name="document_chunks_exactly_one_source",
         ),
         Index("document_chunks_topic_id_index", "topic_id"),
         Index("document_chunks_note_id_index", "note_id"),
         Index("document_chunks_document_id_index", "document_id"),
+        Index("document_chunks_workspace_page_id_index", "workspace_page_id"),
         Index(
             "document_chunks_embedding_hnsw_index",
             "embedding",

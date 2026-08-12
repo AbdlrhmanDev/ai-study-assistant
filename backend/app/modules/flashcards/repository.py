@@ -316,6 +316,72 @@ async def retention_for_user(db: AsyncSession, user_id: int) -> tuple[int, int]:
     return total, remembered
 
 
+# Anki-style maturity threshold and leech detection -- a card is "mature"
+# once its interval reaches three weeks; a "leech" has been forgotten
+# repeatedly despite review, signalling it needs to be rewritten or dropped.
+MATURE_INTERVAL_DAYS = 21
+LEECH_FORGOT_THRESHOLD = 3
+
+
+async def deck_health(db: AsyncSession, topic_id: int) -> dict:
+    maturity_result = await db.execute(
+        select(
+            func.count().filter((Flashcard.status == "active") & (Flashcard.repetitions == 0)),
+            func.count().filter(
+                (Flashcard.status == "active")
+                & (Flashcard.repetitions > 0)
+                & (Flashcard.interval_days < MATURE_INTERVAL_DAYS)
+            ),
+            func.count().filter(
+                (Flashcard.status == "active") & (Flashcard.interval_days >= MATURE_INTERVAL_DAYS)
+            ),
+            func.count().filter(Flashcard.status == "archived"),
+        ).select_from(Flashcard).where(Flashcard.topic_id == topic_id)
+    )
+    new_count, young_count, mature_count, archived_count = maturity_result.one()
+
+    leech_subquery = (
+        select(FlashcardReview.flashcard_id)
+        .join(Flashcard, Flashcard.id == FlashcardReview.flashcard_id)
+        .where(Flashcard.topic_id == topic_id, FlashcardReview.rating == "forgot")
+        .group_by(FlashcardReview.flashcard_id)
+        .having(func.count() >= LEECH_FORGOT_THRESHOLD)
+        .subquery()
+    )
+    leech_result = await db.execute(select(func.count()).select_from(leech_subquery))
+    leech_count = leech_result.scalar_one()
+
+    return {
+        "new": new_count, "young": young_count, "mature": mature_count,
+        "archived": archived_count, "leeches": leech_count,
+    }
+
+
+async def bulk_get_owned(
+    db: AsyncSession, topic_id: int, user_id: int, flashcard_ids: list[int]
+) -> list[Flashcard]:
+    stmt = (
+        select(Flashcard)
+        .join(Topic, Topic.id == Flashcard.topic_id)
+        .where(
+            Flashcard.id.in_(flashcard_ids), Flashcard.topic_id == topic_id, Topic.user_id == user_id,
+        )
+    )
+    result = await db.execute(stmt)
+    return list(result.scalars().all())
+
+
+async def bulk_set_status(db: AsyncSession, flashcards: list[Flashcard], status: str) -> None:
+    for flashcard in flashcards:
+        flashcard.status = status
+    await db.flush()
+
+
+async def bulk_delete(db: AsyncSession, flashcards: list[Flashcard]) -> None:
+    for flashcard in flashcards:
+        await db.delete(flashcard)
+
+
 async def deck_stats_for_user(
     db: AsyncSession, user_id: int, now: datetime
 ) -> tuple[dict[int, dict], dict[int, tuple[int, int]]]:

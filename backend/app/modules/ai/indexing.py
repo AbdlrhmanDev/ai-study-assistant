@@ -4,6 +4,7 @@ from ...core.config import get_settings
 from ...db.session import get_sessionmaker
 from ..notes.model import Note
 from ..topics.model import Topic
+from ..workspace.model import WorkspacePage
 from . import repository
 from .chunking import chunk_text
 from .embedding import generate_embeddings
@@ -50,6 +51,7 @@ async def _index_note(note_id: int) -> None:
             )
             await repository.replace_note_chunks(
                 db, note_id=note.id, topic_id=note.topic_id, chunks=chunks, embeddings=embeddings,
+                embedding_model=f"{settings.embedding_provider}:{settings.embedding_model}",
             )
             await db.commit()
         except Exception:
@@ -65,6 +67,60 @@ async def enqueue_note_index(note_id: int) -> str:
         return "inline-development"
     return await enqueue(
         "note.index", {"note_id": note_id}, idempotency_key=f"note.index:{note_id}",
+        correlation_id=current_correlation_id(),
+    )
+
+
+def _flatten_block_text(blocks: list[dict]) -> str:
+    """Depth-first join of every block's `content` field -- the same text a
+    reader would see scanning down the page, regardless of nesting."""
+    lines = []
+    for block in blocks:
+        text = (block.get("content") or "").strip()
+        if text:
+            lines.append(text)
+        lines.append(_flatten_block_text(block.get("children") or []))
+    return "\n".join(line for line in lines if line)
+
+
+async def _index_workspace_page(workspace_page_id: int) -> None:
+    """Re-chunk and re-embed a workspace page's content -- only meaningful
+    for pages linked to a topic, since retrieval is always topic-scoped.
+    Called with an unlinked page (or one with no text) to clear any chunks
+    it previously had."""
+    async with get_sessionmaker()() as db:
+        page = await db.get(WorkspacePage, workspace_page_id)
+        if page is None:
+            return
+
+        try:
+            settings = get_settings()
+            content = _flatten_block_text(page.blocks or []) if page.topic_id is not None else ""
+            chunks = chunk_text(content, settings.rag_chunk_size, settings.rag_chunk_overlap) if content else []
+            topic = await db.get(Topic, page.topic_id) if page.topic_id is not None else None
+            embeddings = await _safe_generate_embeddings(
+                chunks, user_id=topic.user_id if topic else None
+            )
+            await repository.replace_workspace_page_chunks(
+                db, workspace_page_id=page.id, topic_id=page.topic_id or 0,
+                chunks=chunks, embeddings=embeddings,
+                embedding_model=f"{settings.embedding_provider}:{settings.embedding_model}",
+            )
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            logger.warning("workspace_page_indexing_failed", workspace_page_id=workspace_page_id, exc_info=True)
+
+
+async def enqueue_workspace_page_index(workspace_page_id: int) -> str:
+    from ...core.jobs import enqueue
+    from ...core.logging import current_correlation_id
+    if not get_settings().redis_url:
+        await _index_workspace_page(workspace_page_id)
+        return "inline-development"
+    return await enqueue(
+        "workspace_page.index", {"workspace_page_id": workspace_page_id},
+        idempotency_key=f"workspace_page.index:{workspace_page_id}",
         correlation_id=current_correlation_id(),
     )
 
@@ -95,6 +151,7 @@ async def _index_document(document_id: int) -> None:
             await repository.insert_document_chunks(
                 db, document_id=document.id, topic_id=document.topic_id,
                 chunks=chunks, embeddings=embeddings,
+                embedding_model=f"{settings.embedding_provider}:{settings.embedding_model}",
             )
             await repository.update_document_status(
                 db, document_id, status="completed", extracted_text=extracted_text

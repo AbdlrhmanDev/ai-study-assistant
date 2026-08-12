@@ -90,6 +90,30 @@ class WorkspacePageCreate(StrictModel):
     topic_id: int | None = Field(None, gt=0)
 
 
+class WorkspacePageImportItem(StrictModel):
+    title: str = Field(min_length=1, max_length=200)
+    topicId: int | None = Field(None, gt=0)
+    blocks: list[Block] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_blocks(self) -> "WorkspacePageImportItem":
+        validate_block_tree(self.blocks)
+        return self
+
+
+MAX_IMPORT_PAGES = 100
+
+
+class WorkspacePageImport(StrictModel):
+    pages: list[WorkspacePageImportItem] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def cap_pages(self) -> "WorkspacePageImport":
+        if len(self.pages) > MAX_IMPORT_PAGES:
+            raise ValueError(f"At most {MAX_IMPORT_PAGES} pages can be imported at once")
+        return self
+
+
 class WorkspacePageUpdate(StrictModel):
     title: str | None = Field(None, min_length=1, max_length=200)
     blocks: list[Block] | None = None
@@ -132,3 +156,25 @@ class WorkspacePageOut(BaseModel):
     blocks: list[dict]
     created_at: datetime
     updated_at: datetime
+
+
+class WorkspacePageVersionSummaryOut(BaseModel):
+    """Listing view -- omits `blocks` since a page can hold up to 500 of
+    them; fetch the single version to preview or restore it."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    workspace_page_id: int
+    title: str
+    created_at: datetime
+
+
+class WorkspacePageVersionOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    workspace_page_id: int
+    title: str
+    blocks: list[dict]
+    created_at: datetime

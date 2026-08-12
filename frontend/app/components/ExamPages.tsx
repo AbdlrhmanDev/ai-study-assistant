@@ -30,6 +30,7 @@ export type Exam = {
   topicId: number;
   title: string;
   timeLimitSeconds: number;
+  status: "draft" | "published";
   createdAt: string;
 };
 
@@ -52,6 +53,14 @@ type QuestionForTaking = {
   concept: string;
   prompt: string;
   options: Record<string, unknown> | null;
+};
+
+type QuestionForReview = QuestionForTaking & {
+  correctAnswer: Record<string, unknown> | null;
+  rubric: RubricCriterion[] | null;
+  explanation: string;
+  sourceType: "note" | "document" | null;
+  sourceTitle: string | null;
 };
 
 type RubricCriterion = { criterion: string; maxPoints: number; description: string };
@@ -202,6 +211,7 @@ export function ExamTopicPage() {
   const [showGenerate, setShowGenerate] = useState(false);
   const [selectedTypes, setSelectedTypes] = useState<ExamQuestionType[]>(["multiple_choice", "true_false", "essay"]);
   const [selectedLevels, setSelectedLevels] = useState<BloomsLevel[]>(["remember", "understand", "apply"]);
+  const [preview, setPreview] = useState(true);
   const [saving, setSaving] = useState(false);
   const [genError, setGenError] = useState("");
   const [deletingExam, setDeletingExam] = useState<ExamListEntry | null>(null);
@@ -257,10 +267,11 @@ export function ExamTopicPage() {
           timeLimitMinutes: Number(data.get("timeLimitMinutes")) || 45,
           questionTypes: selectedTypes,
           bloomsLevels: selectedLevels,
+          preview,
         }),
       });
       setShowGenerate(false);
-      router.push(`/exams/take?examId=${result.exam.id}`);
+      router.push(preview ? `/exams/review?examId=${result.exam.id}` : `/exams/take?examId=${result.exam.id}`);
     } catch (requestError) {
       setGenError(messageFromError(requestError));
     } finally {
@@ -302,6 +313,7 @@ export function ExamTopicPage() {
                 <div>
                   <h3>{exam.title}</h3>
                   <div className="flashcard-meta">
+                    {exam.status === "draft" && <span className="quiz-difficulty-badge">Draft</span>}
                     <small>{exam.questionCount} question{exam.questionCount === 1 ? "" : "s"}</small>
                     <small><Clock size={11} /> {Math.round(exam.timeLimitSeconds / 60)} min</small>
                     {exam.latestAttempt && <small>Last score: {exam.latestAttempt.score}%</small>}
@@ -309,8 +321,8 @@ export function ExamTopicPage() {
                 </div>
               </div>
               <div className="note-actions">
-                <Link className="note-action edit-action" href={`/exams/take?examId=${exam.id}`}>
-                  <span><Play size={13} fill="currentColor" /></span>{exam.latestAttempt ? "Retake" : "Take exam"}
+                <Link className="note-action edit-action" href={exam.status === "draft" ? `/exams/review?examId=${exam.id}` : `/exams/take?examId=${exam.id}`}>
+                  <span><Play size={13} fill="currentColor" /></span>{exam.status === "draft" ? "Review" : exam.latestAttempt ? "Retake" : "Take exam"}
                 </Link>
                 {exam.latestAttempt && (
                   <Link className="note-action" href={`/exams/results?attemptId=${exam.latestAttempt.id}&topicId=${topicId}`}>
@@ -360,6 +372,11 @@ export function ExamTopicPage() {
               <label>Number of questions<input type="number" name="count" min={4} max={40} defaultValue={10} /></label>
               <label>Time limit (minutes)<input type="number" name="timeLimitMinutes" min={5} max={240} defaultValue={45} /></label>
             </div>
+
+            <label className="check">
+              <input type="checkbox" checked={preview} onChange={(event) => setPreview(event.target.checked)} /> Preview before publishing
+              <span className="modal-hint quiz-adaptive-hint">Review, edit, or regenerate individual questions before this exam becomes takeable.</span>
+            </label>
 
             <div className="modal-actions">
               <button type="button" className="button button-secondary" onClick={() => setShowGenerate(false)}>Cancel</button>
@@ -739,6 +756,190 @@ export function ExamResultsPage() {
           </section>
         </>
       )}
+    </PageShell>
+  );
+}
+
+// --------------------------------------------------------------------------
+// Draft review -- generated with `preview: true`; lets the owner edit,
+// regenerate, or drop individual questions before the exam can be taken.
+// --------------------------------------------------------------------------
+
+export function ExamReviewPage() {
+  const params = useSearchParams();
+  const router = useRouter();
+  const handleAuthFailure = useAuthFailure();
+  const examId = Number(params.get("examId"));
+
+  const [exam, setExam] = useState<Exam | null>(null);
+  const [questions, setQuestions] = useState<QuestionForReview[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [publishing, setPublishing] = useState(false);
+  const [busyQuestionId, setBusyQuestionId] = useState<number | null>(null);
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editPrompt, setEditPrompt] = useState("");
+
+  const load = useCallback(async () => {
+    if (!Number.isInteger(examId) || examId < 1) {
+      router.replace("/exams");
+      return;
+    }
+    setLoading(true);
+    setError("");
+    try {
+      const result = await api<{ exam: Exam; questions: QuestionForReview[] }>(`/exams/${examId}/review`);
+      setExam(result.exam);
+      setQuestions(result.questions);
+    } catch (requestError) {
+      handleAuthFailure(requestError);
+      setError(messageFromError(requestError));
+    } finally {
+      setLoading(false);
+    }
+  }, [examId, handleAuthFailure, router]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => void load(), 0);
+    return () => window.clearTimeout(timer);
+  }, [load]);
+
+  function startEditing(question: QuestionForReview) {
+    setEditingId(question.id);
+    setEditPrompt(question.prompt);
+  }
+
+  async function saveEdit(questionId: number) {
+    setBusyQuestionId(questionId);
+    setError("");
+    try {
+      const updated = await api<QuestionForReview>(`/exams/${examId}/questions/${questionId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ prompt: editPrompt }),
+      });
+      setQuestions((current) => current.map((question) => (question.id === questionId ? updated : question)));
+      setEditingId(null);
+    } catch (requestError) {
+      setError(messageFromError(requestError));
+    } finally {
+      setBusyQuestionId(null);
+    }
+  }
+
+  async function regenerateQuestion(questionId: number) {
+    setBusyQuestionId(questionId);
+    setError("");
+    try {
+      const updated = await api<QuestionForReview>(`/exams/${examId}/questions/${questionId}/regenerate`, {
+        method: "POST",
+      });
+      setQuestions((current) => current.map((question) => (question.id === questionId ? updated : question)));
+    } catch (requestError) {
+      setError(messageFromError(requestError));
+    } finally {
+      setBusyQuestionId(null);
+    }
+  }
+
+  async function deleteQuestion(questionId: number) {
+    setBusyQuestionId(questionId);
+    setError("");
+    try {
+      await api<null>(`/exams/${examId}/questions/${questionId}`, { method: "DELETE" });
+      setQuestions((current) => current.filter((question) => question.id !== questionId));
+    } catch (requestError) {
+      setError(messageFromError(requestError));
+    } finally {
+      setBusyQuestionId(null);
+    }
+  }
+
+  async function publishExam() {
+    if (!exam) return;
+    setPublishing(true);
+    setError("");
+    try {
+      await api<{ exam: Exam }>(`/exams/${examId}/publish`, { method: "POST" });
+      router.push(`/exams/topic?topicId=${exam.topicId}`);
+    } catch (requestError) {
+      setError(messageFromError(requestError));
+    } finally {
+      setPublishing(false);
+    }
+  }
+
+  if (loading) {
+    return (
+      <PageShell className="exam-review-page" title="Review exam" subtitle="Loading this draft…">
+        <LoadingState label="Loading draft…" />
+      </PageShell>
+    );
+  }
+  if (!exam) {
+    return (
+      <PageShell className="exam-review-page" title="Review exam" subtitle="This draft couldn't be loaded.">
+        {error && <p className="page-error" role="alert">{error}</p>}
+      </PageShell>
+    );
+  }
+
+  return (
+    <PageShell
+      className="exam-review-page"
+      title={exam.title}
+      subtitle="Review, edit, or regenerate any question before publishing this exam."
+      action={<Link className="back-topics" href={`/exams/topic?topicId=${exam.topicId}`}><ArrowLeft size={13} /> Back to exams</Link>}
+    >
+      {error && <p className="page-error" role="alert">{error}</p>}
+      <div className="notes-list quiz-review-list">
+        {questions.map((question, index) => (
+          <article key={question.id} className="quiz-review-item">
+            <div className="flashcard-meta">
+              <span className="quiz-difficulty-badge">{index + 1}. {QUESTION_TYPE_LABELS[question.questionType]}</span>
+              <span className="quiz-difficulty-badge">{question.concept}</span>
+              <span className="exam-blooms-badge">{BLOOMS_LABELS[question.bloomsLevel]}</span>
+            </div>
+            {editingId === question.id ? (
+              <div className="quiz-review-edit">
+                <textarea value={editPrompt} onChange={(event) => setEditPrompt(event.target.value)} rows={2} />
+                <div className="modal-actions">
+                  <button type="button" className="button button-secondary" onClick={() => setEditingId(null)}>Cancel</button>
+                  <button
+                    type="button" className="button button-primary" disabled={busyQuestionId === question.id}
+                    onClick={() => void saveEdit(question.id)}
+                  >
+                    {busyQuestionId === question.id ? "Saving…" : "Save"}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <p className="quiz-review-prompt">{question.prompt}</p>
+            )}
+            <p className="quiz-review-explanation"><strong>Explanation:</strong> {question.explanation}</p>
+            <div className="note-actions">
+              <button type="button" className="note-action" disabled={busyQuestionId === question.id} onClick={() => startEditing(question)}>Edit</button>
+              <button
+                type="button" className="note-action" disabled={busyQuestionId === question.id}
+                onClick={() => void regenerateQuestion(question.id)}
+              >
+                {busyQuestionId === question.id ? "Regenerating…" : "Regenerate"}
+              </button>
+              <button
+                type="button" className="danger-link" disabled={busyQuestionId === question.id}
+                onClick={() => void deleteQuestion(question.id)}
+              >
+                Delete
+              </button>
+            </div>
+          </article>
+        ))}
+        {!questions.length && <div className="empty">No questions left in this draft — delete it and generate a new one.</div>}
+      </div>
+      <div className="modal-actions quiz-review-publish-row">
+        <button type="button" className="button button-primary" disabled={publishing || !questions.length} onClick={() => void publishExam()}>
+          {publishing ? "Publishing…" : "Publish exam"}
+        </button>
+      </div>
     </PageShell>
   );
 }

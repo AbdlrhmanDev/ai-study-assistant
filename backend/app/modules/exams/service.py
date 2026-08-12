@@ -17,12 +17,14 @@ from . import grading, repository
 from .exceptions import (
     ExamAttemptNotFoundError,
     ExamGenerationParseError,
+    ExamNotEditableError,
     ExamNotFoundError,
+    ExamQuestionEditError,
     ExamQuestionNotFoundError,
     NoExamSourceContentError,
 )
 from .model import Exam, ExamAttempt, ExamQuestion
-from .schema import ExamGenerate
+from .schema import ExamGenerate, ExamQuestionEdit
 
 MAX_EVIDENCE_CHARS = 14000
 
@@ -198,10 +200,23 @@ def _normalize_question(raw_item: dict, allowed_types: set[str], evidence: list[
     }
 
 
+def _normalize_prompt_key(prompt: str) -> str:
+    return re.sub(r"\s+", " ", prompt.strip().lower())
+
+
+MAX_AVOID_PROMPTS = 60
+
+
 async def generate_exam(db: AsyncSession, topic_id: int, user_id: int, payload: ExamGenerate) -> tuple[Exam, list]:
     topic = await topics_service.get_owned_topic_or_404(db, topic_id, user_id)
     evidence = await _gather_evidence(db, topic_id, user_id)
     evidence_block = _build_evidence_block(evidence)
+    existing_prompts = await repository.list_existing_prompts_for_topic(db, topic_id)
+
+    avoid_block = ""
+    if existing_prompts:
+        sample = "\n".join(f"- {p}" for p in existing_prompts[:MAX_AVOID_PROMPTS])
+        avoid_block = f"\n\nDo NOT repeat or closely paraphrase any of these already-asked questions:\n{sample}"
 
     prompt = f"""TOPIC: {topic.title}
 
@@ -209,7 +224,7 @@ EVIDENCE
 {evidence_block}
 
 Generate {payload.count} exam questions using only these types: {', '.join(payload.questionTypes)}.
-Use only these Bloom's levels: {', '.join(payload.bloomsLevels)}."""
+Use only these Bloom's levels: {', '.join(payload.bloomsLevels)}.{avoid_block}"""
 
     try:
         raw_answer, _provider_name, _model_name = await provider.generate(prompt, EXAM_INSTRUCTIONS)
@@ -220,10 +235,25 @@ Use only these Bloom's levels: {', '.join(payload.bloomsLevels)}."""
 
     raw_items = _extract_json(raw_answer, array=True)
     allowed_types = set(payload.questionTypes)
-    normalized = [
-        result for raw_item in raw_items
-        if isinstance(raw_item, dict) and (result := _normalize_question(raw_item, allowed_types, evidence))
-    ]
+    existing_keys = {_normalize_prompt_key(p) for p in existing_prompts}
+    seen_keys: set[str] = set()
+    all_valid, deduped = [], []
+    for raw_item in raw_items:
+        if not isinstance(raw_item, dict):
+            continue
+        result = _normalize_question(raw_item, allowed_types, evidence)
+        if not result:
+            continue
+        all_valid.append(result)
+        key = _normalize_prompt_key(result["prompt"])
+        if key in existing_keys or key in seen_keys:
+            continue
+        seen_keys.add(key)
+        deduped.append(result)
+
+    # Same rationale as quizzes/service.py: don't let dedup-to-zero turn a
+    # successful generation into a hard failure.
+    normalized = deduped or all_valid
     if not normalized:
         raise ExamGenerationParseError()
 
@@ -231,6 +261,8 @@ Use only these Bloom's levels: {', '.join(payload.bloomsLevels)}."""
         db, topic_id=topic_id, title=f"{topic.title}: Exam",
         time_limit_seconds=payload.timeLimitMinutes * 60,
     )
+    if payload.preview:
+        exam = await repository.set_exam_status(db, exam, status="draft")
     questions = []
     for order_index, item in enumerate(normalized):
         question = await repository.create_question(
@@ -268,8 +300,258 @@ async def get_exam_for_taking(db: AsyncSession, exam_id: int, user_id: int) -> t
     exam = await repository.get_exam_for_user(db, exam_id, user_id)
     if exam is None:
         raise ExamNotFoundError()
+    if exam.status != "published":
+        raise ExamNotEditableError()
     questions = await repository.list_questions_by_exam(db, exam_id)
     return exam, questions
+
+
+async def review_exam(db: AsyncSession, exam_id: int, user_id: int) -> tuple[Exam, list]:
+    exam = await repository.get_exam_for_user(db, exam_id, user_id)
+    if exam is None:
+        raise ExamNotFoundError()
+    if exam.status != "draft":
+        raise ExamNotEditableError()
+    questions = await repository.list_questions_by_exam(db, exam_id)
+    return exam, questions
+
+
+async def publish_exam(db: AsyncSession, exam_id: int, user_id: int) -> Exam:
+    exam = await repository.get_exam_for_user(db, exam_id, user_id)
+    if exam is None:
+        raise ExamNotFoundError()
+    if exam.status != "published":
+        exam = await repository.set_exam_status(db, exam, status="published")
+        await db.commit()
+        await db.refresh(exam)
+    return exam
+
+
+async def _get_owned_draft_question(
+    db: AsyncSession, exam_id: int, question_id: int, user_id: int
+) -> tuple[Exam, ExamQuestion]:
+    exam = await repository.get_exam_for_user(db, exam_id, user_id)
+    if exam is None:
+        raise ExamNotFoundError()
+    if exam.status != "draft":
+        raise ExamNotEditableError()
+    question_row = await repository.get_question_for_exam(db, question_id, exam_id)
+    if question_row is None:
+        raise ExamQuestionNotFoundError()
+    return exam, question_row[0]
+
+
+def _build_answer_shape(question_type: str, payload: ExamQuestionEdit) -> tuple[dict | None, dict | None, list | None] | None:
+    """Rebuild options/correct_answer/rubric from the patch fields for the
+    question's existing type. Returns None when the patch contradicts the
+    type (e.g. `correctIndex` on a `true_false` question)."""
+    if question_type == "multiple_choice":
+        if payload.choices is None or payload.correctIndex is None:
+            return None
+        choices = [choice.strip() for choice in payload.choices if choice.strip()]
+        if len(choices) < 2 or not (0 <= payload.correctIndex < len(choices)):
+            return None
+        return {"choices": choices}, {"index": payload.correctIndex}, None
+    if question_type == "true_false":
+        if payload.correctValue is None:
+            return None
+        return None, {"value": payload.correctValue}, None
+    if question_type == "short_answer":
+        if payload.acceptedAnswers is None:
+            return None
+        accepted = [answer.strip() for answer in payload.acceptedAnswers if answer.strip()]
+        if not accepted:
+            return None
+        return None, {"accepted": accepted}, None
+    # essay / case_study / coding
+    if payload.rubric is None:
+        return None
+    clean_rubric = []
+    for criterion in payload.rubric:
+        if not isinstance(criterion, dict):
+            continue
+        label = str(criterion.get("criterion") or "").strip()
+        max_points = criterion.get("maxPoints")
+        if not label or not isinstance(max_points, (int, float)) or max_points <= 0:
+            continue
+        clean_rubric.append({
+            "criterion": label[:100], "maxPoints": float(max_points),
+            "description": str(criterion.get("description") or "").strip()[:500],
+        })
+    if len(clean_rubric) < 2:
+        return None
+    return None, None, clean_rubric
+
+
+async def edit_question(
+    db: AsyncSession, exam_id: int, question_id: int, user_id: int, payload: ExamQuestionEdit
+) -> ExamQuestion:
+    _exam, question = await _get_owned_draft_question(db, exam_id, question_id, user_id)
+
+    options, correct_answer, rubric = question.options, question.correct_answer, question.rubric
+    update_answer_shape = any(
+        value is not None
+        for value in (
+            payload.choices, payload.correctIndex, payload.correctValue,
+            payload.acceptedAnswers, payload.rubric,
+        )
+    )
+    if update_answer_shape:
+        built = _build_answer_shape(question.question_type, payload)
+        if built is None:
+            raise ExamQuestionEditError()
+        options, correct_answer, rubric = built
+
+    question = await repository.update_question(
+        db, question,
+        prompt=payload.prompt, explanation=payload.explanation, concept=payload.concept,
+        blooms_level=payload.bloomsLevel,
+        options=options, correct_answer=correct_answer, rubric=rubric,
+        update_answer_shape=update_answer_shape,
+    )
+    await db.commit()
+    return question
+
+
+async def edit_question_with_source(
+    db: AsyncSession, exam_id: int, question_id: int, user_id: int, payload: ExamQuestionEdit
+) -> tuple[ExamQuestion, str | None, str | None]:
+    await edit_question(db, exam_id, question_id, user_id, payload)
+    row = await repository.get_question_for_exam(db, question_id, exam_id)
+    if row is None:
+        raise ExamQuestionNotFoundError()
+    return row
+
+
+async def delete_question(db: AsyncSession, exam_id: int, question_id: int, user_id: int) -> None:
+    _exam, question = await _get_owned_draft_question(db, exam_id, question_id, user_id)
+    await repository.delete_question(db, question)
+    await db.commit()
+
+
+async def regenerate_question(
+    db: AsyncSession, exam_id: int, question_id: int, user_id: int
+) -> tuple[ExamQuestion, str | None, str | None]:
+    exam, question = await _get_owned_draft_question(db, exam_id, question_id, user_id)
+    await topics_service.get_owned_topic_or_404(db, exam.topic_id, user_id)
+    evidence = await _gather_evidence(db, exam.topic_id, user_id)
+    evidence_block = _build_evidence_block(evidence)
+    existing_prompts = await repository.list_existing_prompts_for_topic(db, exam.topic_id)
+
+    avoid_block = ""
+    if existing_prompts:
+        sample = "\n".join(f"- {p}" for p in existing_prompts[:MAX_AVOID_PROMPTS])
+        avoid_block = f"\n\nDo NOT repeat or closely paraphrase any of these already-asked questions:\n{sample}"
+
+    prompt = f"""TOPIC: {exam.title}
+EVIDENCE
+{evidence_block}
+
+Generate 1 exam question using only this type: {question.question_type}.
+Use only this Bloom's level: {question.blooms_level}.{avoid_block}
+
+Refine this existing question rather than inventing a completely unrelated one:
+Concept: {question.concept}
+Prompt: {question.prompt}"""
+
+    try:
+        raw_answer, _provider_name, _model_name = await provider.generate(prompt, EXAM_INSTRUCTIONS)
+    except AppError:
+        raise
+    except Exception as error:
+        raise AppError("AI tutor is temporarily unavailable", 502, {"cause": str(error)}) from error
+
+    normalized = None
+    for raw_item in _extract_json(raw_answer, array=True):
+        if not isinstance(raw_item, dict):
+            continue
+        result = _normalize_question(raw_item, {question.question_type}, evidence)
+        if result:
+            normalized = result
+            break
+    if normalized is None:
+        raise ExamGenerationParseError()
+
+    question = await repository.update_question(
+        db, question,
+        prompt=normalized["prompt"], explanation=normalized["explanation"], concept=normalized["concept"],
+        blooms_level=normalized["blooms_level"],
+        options=normalized["options"], correct_answer=normalized["correct_answer"], rubric=normalized["rubric"],
+        update_answer_shape=True,
+        source_note_id=normalized["source_note_id"], source_document_id=normalized["source_document_id"],
+        update_source=True,
+    )
+    await db.commit()
+    await db.refresh(question)
+
+    source_type = "note" if question.source_note_id else "document" if question.source_document_id else None
+    source_title = next(
+        (
+            item.source_title for item in evidence
+            if item.source_type == source_type
+            and item.source_id == (question.source_note_id or question.source_document_id)
+        ),
+        None,
+    ) if source_type else None
+    return question, source_type, source_title
+
+
+async def get_exam_analytics(db: AsyncSession, exam_id: int, user_id: int) -> dict:
+    exam = await repository.get_exam_for_user(db, exam_id, user_id)
+    if exam is None:
+        raise ExamNotFoundError()
+    questions = await repository.question_analytics(db, exam_id)
+    for entry in questions:
+        possible = entry["pointsPossible"]
+        entry["averageScore"] = round(entry["pointsEarned"] / possible, 3) if possible else None
+    return {"examId": exam_id, "questions": questions}
+
+
+async def get_topic_exam_analytics(db: AsyncSession, topic_id: int, user_id: int) -> dict:
+    """Item-level exam analytics across a topic: time-per-question,
+    most-missed concepts, and average score per item."""
+    await topics_service.get_owned_topic_or_404(db, topic_id, user_id)
+    stats = await repository.topic_exam_question_stats(db, topic_id, user_id)
+    answer_times = await repository.per_question_answer_times(db, topic_id, user_id)
+
+    questions = []
+    concept_stats: dict[str, dict] = {}
+    for row in stats:
+        possible = row["pointsPossible"]
+        average_score = round(row["pointsEarned"] / possible, 3) if possible else None
+        entry_times = answer_times.get(row["questionId"], [])
+        questions.append({
+            "questionId": row["questionId"],
+            "concept": row["concept"],
+            "questionType": row["questionType"],
+            "prompt": row["prompt"],
+            "timesAnswered": row["timesAnswered"],
+            "averageScore": average_score,
+            "averageTimeSeconds": round(sum(entry_times) / len(entry_times), 1) if entry_times else None,
+        })
+        concept = concept_stats.setdefault(
+            row["concept"],
+            {"concept": row["concept"], "timesAnswered": 0, "pointsEarned": 0.0, "pointsPossible": 0.0},
+        )
+        concept["timesAnswered"] += row["timesAnswered"]
+        concept["pointsEarned"] += row["pointsEarned"]
+        concept["pointsPossible"] += row["pointsPossible"]
+
+    concepts = []
+    for entry in concept_stats.values():
+        possible = entry["pointsPossible"]
+        concepts.append({
+            **entry,
+            "averageScore": round(entry["pointsEarned"] / possible, 3) if possible else None,
+        })
+    concepts.sort(key=lambda entry: entry["averageScore"] or 0)
+
+    return {
+        "topicId": topic_id,
+        "questions": questions,
+        "concepts": concepts,
+        "mostMissedConcepts": [entry for entry in concepts if entry["averageScore"] is not None][:5],
+    }
 
 
 async def delete_exam(db: AsyncSession, exam_id: int, user_id: int) -> None:
@@ -291,6 +573,8 @@ async def start_attempt(db: AsyncSession, exam_id: int, user_id: int) -> ExamAtt
     exam = await repository.get_exam_for_user(db, exam_id, user_id)
     if exam is None:
         raise ExamNotFoundError()
+    if exam.status != "published":
+        raise ExamNotEditableError()
     deadline_at = datetime.now(timezone.utc) + timedelta(seconds=exam.time_limit_seconds)
     attempt = await repository.create_attempt(db, exam_id=exam_id, user_id=user_id, deadline_at=deadline_at)
     await db.commit()

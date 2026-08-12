@@ -1,13 +1,30 @@
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..ai import indexing as ai_indexing
 from ..ai import provider as ai_provider
 from ..topics import service as topics_service
 from . import repository
-from .exceptions import WorkspaceBlockNotFoundError, WorkspacePageConflictError, WorkspacePageNotFoundError
-from .model import WorkspacePage
-from .schema import LinkWorkspacePageTopic, WorkspacePageCreate, WorkspacePageUpdate
+from .exceptions import (
+    WorkspaceBlockNotFoundError,
+    WorkspacePageConflictError,
+    WorkspacePageNotFoundError,
+    WorkspacePageVersionNotFoundError,
+)
+from .model import WorkspacePage, WorkspacePageVersion
+from .schema import (
+    LinkWorkspacePageTopic,
+    WorkspacePageCreate,
+    WorkspacePageImport,
+    WorkspacePageUpdate,
+    validate_block_tree,
+)
+
+# Recovery snapshots are opportunistic, not per-keystroke: a new version is
+# only recorded if the last one for this page is older than this, so rapid
+# autosave doesn't flood the history with near-duplicate snapshots.
+SNAPSHOT_MIN_INTERVAL = timedelta(minutes=5)
 
 WORKSPACE_AI_INSTRUCTIONS = (
     "You are a concise study assistant helping a student edit notes inside a "
@@ -38,6 +55,42 @@ async def list_pages(db: AsyncSession, user_id: int, topic_id: int | None) -> li
     return await repository.list_for_user(db, user_id, topic_id)
 
 
+def serialize_export(page: WorkspacePage) -> dict:
+    """Full-page payload for the standalone workspace export. Includes the
+    block tree, which the account-level export deliberately omits."""
+    return {
+        "id": page.id,
+        "topicId": page.topic_id,
+        "title": page.title,
+        "blocks": page.blocks or [],
+        "updatedAt": page.updated_at.isoformat(),
+    }
+
+
+async def import_pages(
+    db: AsyncSession, user_id: int, payload: WorkspacePageImport
+) -> list[WorkspacePage]:
+    """Recreate pages from an export payload. Topic references are validated
+    up-front so a bad topic fails the whole import atomically (nothing is
+    committed) instead of leaving a half-imported batch."""
+    topic_ids = {item.topicId for item in payload.pages if item.topicId is not None}
+    for topic_id in topic_ids:
+        await topics_service.get_owned_topic_or_404(db, topic_id, user_id)
+
+    created = []
+    for item in payload.pages:
+        blocks = validate_block_tree(item.blocks)
+        page = await repository.create(db, user_id=user_id, title=item.title, topic_id=item.topicId)
+        page = await repository.update(
+            db, page, title=item.title, blocks=[block.model_dump(mode="json") for block in blocks]
+        )
+        created.append(page)
+    await db.commit()
+    for page in created:
+        await ai_indexing.enqueue_workspace_page_index(page.id)
+    return created
+
+
 async def create_page(
     db: AsyncSession, user_id: int, payload: WorkspacePageCreate
 ) -> WorkspacePage:
@@ -53,6 +106,19 @@ async def create_page(
 
 async def get_page(db: AsyncSession, page_id: int, user_id: int) -> WorkspacePage:
     return await get_owned_page_or_404(db, page_id, user_id)
+
+
+async def _maybe_snapshot(db: AsyncSession, page: WorkspacePage) -> None:
+    """Records the page's state as it was *before* the update about to be
+    applied -- only if enough time has passed since the last snapshot, or
+    none exists yet."""
+    latest = await repository.get_latest_version(db, page.id)
+    now = datetime.now(timezone.utc)
+    if latest is not None and (now - latest.created_at) < SNAPSHOT_MIN_INTERVAL:
+        return
+    await repository.create_version(
+        db, workspace_page_id=page.id, title=page.title, blocks=page.blocks
+    )
 
 
 async def update_page(
@@ -77,9 +143,44 @@ async def update_page(
     blocks_dump = None
     if payload.blocks is not None:
         blocks_dump = [block.model_dump(mode="json") for block in payload.blocks]
+        await _maybe_snapshot(db, page)
     page = await repository.update(db, page, title=payload.title, blocks=blocks_dump)
     await db.commit()
     await db.refresh(page)
+    if blocks_dump is not None:
+        await ai_indexing.enqueue_workspace_page_index(page.id)
+    return page
+
+
+async def list_versions(db: AsyncSession, page_id: int, user_id: int) -> list[WorkspacePageVersion]:
+    await get_owned_page_or_404(db, page_id, user_id)
+    return await repository.list_versions_for_page(db, page_id)
+
+
+async def get_version(db: AsyncSession, page_id: int, version_id: int, user_id: int) -> WorkspacePageVersion:
+    await get_owned_page_or_404(db, page_id, user_id)
+    version = await repository.get_version_for_page(db, version_id, page_id)
+    if version is None:
+        raise WorkspacePageVersionNotFoundError()
+    return version
+
+
+async def restore_version(
+    db: AsyncSession, page_id: int, version_id: int, user_id: int
+) -> WorkspacePage:
+    page = await get_owned_page_or_404(db, page_id, user_id)
+    version = await repository.get_version_for_page(db, version_id, page_id)
+    if version is None:
+        raise WorkspacePageVersionNotFoundError()
+
+    # The current state is itself worth keeping -- restoring is undoable too.
+    await repository.create_version(
+        db, workspace_page_id=page.id, title=page.title, blocks=page.blocks
+    )
+    page = await repository.update(db, page, title=version.title, blocks=version.blocks)
+    await db.commit()
+    await db.refresh(page)
+    await ai_indexing.enqueue_workspace_page_index(page.id)
     return page
 
 
@@ -92,6 +193,7 @@ async def link_topic(
     page = await repository.set_topic(db, page, payload.topic_id)
     await db.commit()
     await db.refresh(page)
+    await ai_indexing.enqueue_workspace_page_index(page.id)
     return page
 
 

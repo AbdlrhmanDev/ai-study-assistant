@@ -16,9 +16,21 @@ class FileTooLargeError(AppError):
         super().__init__(f"File exceeds the {max_mb}MB upload limit", 413)
 
 
+class StorageQuotaExceededError(AppError):
+    def __init__(self, max_mb: int) -> None:
+        super().__init__(
+            f"This would exceed your {max_mb}MB total storage limit. Delete a document to free up space.", 413
+        )
+
+
 class DocumentNotFoundError(AppError):
     def __init__(self) -> None:
         super().__init__("Document not found", 404)
+
+
+class ChatMessageNotFoundError(AppError):
+    def __init__(self) -> None:
+        super().__init__("Message not found", 404)
 
 
 class DocumentNotReadyError(AppError):

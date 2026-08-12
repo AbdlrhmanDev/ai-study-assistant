@@ -61,9 +61,29 @@ async def test_duplicate_quiz_generate_with_same_idempotency_key_reuses_result(
     assert counting_ai_generate["count"] == 1
 
 
-async def test_quiz_generate_without_idempotency_key_always_generates_fresh(
+async def test_quiz_generate_without_idempotency_key_generates_fresh_when_payload_differs(
     authed_client: AsyncClient, db_session: AsyncSession, test_user: User, counting_ai_generate: dict,
 ) -> None:
+    topic = await _create_topic_with_note(db_session, test_user)
+
+    first = await authed_client.post(
+        f"/api/v1/topics/{topic.id}/quizzes/generate", json={"source": "topic", "count": 1}
+    )
+    second = await authed_client.post(
+        f"/api/v1/topics/{topic.id}/quizzes/generate", json={"source": "topic", "count": 2}
+    )
+
+    assert first.status_code == 201 and second.status_code == 201
+    assert first.json()["quiz"]["id"] != second.json()["quiz"]["id"]
+    assert counting_ai_generate["count"] == 2
+
+
+async def test_quiz_generate_without_key_reuses_identical_artifact(
+    authed_client: AsyncClient, db_session: AsyncSession, test_user: User, counting_ai_generate: dict,
+) -> None:
+    """The stable-artifact cache dedupes identical generations even without
+    an idempotency key: two identical (payload, material-signature) requests
+    are served from cache, so the AI provider runs once."""
     topic = await _create_topic_with_note(db_session, test_user)
 
     first = await authed_client.post(
@@ -74,11 +94,11 @@ async def test_quiz_generate_without_idempotency_key_always_generates_fresh(
     )
 
     assert first.status_code == 201 and second.status_code == 201
-    assert first.json()["quiz"]["id"] != second.json()["quiz"]["id"]
-    assert counting_ai_generate["count"] == 2
+    assert first.json()["quiz"]["id"] == second.json()["quiz"]["id"]
+    assert counting_ai_generate["count"] == 1
 
 
-async def test_different_idempotency_keys_both_generate(
+async def test_different_idempotency_keys_generate_distinct_artifacts(
     authed_client: AsyncClient, db_session: AsyncSession, test_user: User, counting_ai_generate: dict,
 ) -> None:
     topic = await _create_topic_with_note(db_session, test_user)
@@ -88,7 +108,7 @@ async def test_different_idempotency_keys_both_generate(
         headers={"Idempotency-Key": "click-1"},
     )
     second = await authed_client.post(
-        f"/api/v1/topics/{topic.id}/quizzes/generate", json={"source": "topic", "count": 1},
+        f"/api/v1/topics/{topic.id}/quizzes/generate", json={"source": "topic", "count": 2},
         headers={"Idempotency-Key": "click-2"},
     )
 

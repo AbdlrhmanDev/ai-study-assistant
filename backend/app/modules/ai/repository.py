@@ -1,8 +1,11 @@
-from sqlalchemy import case, delete, func, literal, select, update
+from sqlalchemy import case, delete, func, literal, or_, select, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..notes.model import Note
-from .model import ChatMessage, Document, DocumentChunk, MessageSource
+from ..topics.model import Topic
+from ..workspace.model import WorkspacePage
+from .model import ChatMessage, Document, DocumentChunk, MessageFeedback, MessageSource
 from .rag import ChunkRow
 
 # --------------------------------------------------------------------------
@@ -61,6 +64,37 @@ async def delete_all_by_topic(db: AsyncSession, topic_id: int) -> int:
     return result.rowcount or 0
 
 
+async def get_message_with_owner(db: AsyncSession, message_id: int) -> tuple[ChatMessage, int] | None:
+    """Returns (message, topic_owner_user_id), or None if the message
+    doesn't exist."""
+    stmt = (
+        select(ChatMessage, Topic.user_id)
+        .join(Topic, Topic.id == ChatMessage.topic_id)
+        .where(ChatMessage.id == message_id)
+    )
+    result = await db.execute(stmt)
+    row = result.first()
+    if row is None:
+        return None
+    return row[0], row[1]
+
+
+async def upsert_message_feedback(
+    db: AsyncSession, *, message_id: int, rating: int, reason: str | None
+) -> MessageFeedback:
+    stmt = (
+        pg_insert(MessageFeedback)
+        .values(message_id=message_id, rating=rating, reason=reason)
+        .on_conflict_do_update(
+            index_elements=[MessageFeedback.message_id],
+            set_={"rating": rating, "reason": reason, "updated_at": func.now()},
+        )
+        .returning(MessageFeedback)
+    )
+    result = await db.execute(stmt)
+    return result.scalar_one()
+
+
 # --------------------------------------------------------------------------
 # Chunks (hybrid retrieval)
 # --------------------------------------------------------------------------
@@ -68,22 +102,28 @@ async def delete_all_by_topic(db: AsyncSession, topic_id: int) -> int:
 
 def _chunk_row_columns():
     """Common SELECT list to build a `ChunkRow` from `document_chunks`
-    joined with whichever source (note or document) owns it."""
+    joined with whichever source (note, document, or workspace page) owns
+    it."""
     return (
         DocumentChunk.id.label("chunk_id"),
         case(
             (DocumentChunk.note_id.isnot(None), literal("note")),
-            else_=literal("document"),
+            (DocumentChunk.document_id.isnot(None), literal("document")),
+            else_=literal("workspace_page"),
         ).label("source_type"),
-        func.coalesce(DocumentChunk.note_id, DocumentChunk.document_id).label("source_id"),
-        func.coalesce(Note.title, Document.title).label("source_title"),
+        func.coalesce(
+            DocumentChunk.note_id, DocumentChunk.document_id, DocumentChunk.workspace_page_id
+        ).label("source_id"),
+        func.coalesce(Note.title, Document.title, WorkspacePage.title).label("source_title"),
         DocumentChunk.content.label("text"),
     )
 
 
 def _chunk_source_join(stmt):
-    return stmt.outerjoin(Note, Note.id == DocumentChunk.note_id).outerjoin(
-        Document, Document.id == DocumentChunk.document_id
+    return (
+        stmt.outerjoin(Note, Note.id == DocumentChunk.note_id)
+        .outerjoin(Document, Document.id == DocumentChunk.document_id)
+        .outerjoin(WorkspacePage, WorkspacePage.id == DocumentChunk.workspace_page_id)
     )
 
 
@@ -138,6 +178,7 @@ async def replace_note_chunks(
     topic_id: int,
     chunks: list[str],
     embeddings: list[list[float] | None],
+    embedding_model: str | None = None,
 ) -> None:
     """Delete a note's existing chunks and insert freshly chunked+embedded
     ones -- called whenever a note is created or its content changes."""
@@ -147,6 +188,30 @@ async def replace_note_chunks(
             DocumentChunk(
                 topic_id=topic_id, note_id=note_id, chunk_index=index,
                 content=content, embedding=embedding,
+                embedding_model=embedding_model if embedding is not None else None,
+            )
+        )
+
+
+async def replace_workspace_page_chunks(
+    db: AsyncSession,
+    *,
+    workspace_page_id: int,
+    topic_id: int,
+    chunks: list[str],
+    embeddings: list[list[float] | None],
+    embedding_model: str | None = None,
+) -> None:
+    """Same delete-then-insert pattern as `replace_note_chunks`. Called with
+    an empty `chunks` list to clear a page's chunks entirely (e.g. it was
+    unlinked from its topic)."""
+    await db.execute(delete(DocumentChunk).where(DocumentChunk.workspace_page_id == workspace_page_id))
+    for index, (content, embedding) in enumerate(zip(chunks, embeddings, strict=True)):
+        db.add(
+            DocumentChunk(
+                topic_id=topic_id, workspace_page_id=workspace_page_id, chunk_index=index,
+                content=content, embedding=embedding,
+                embedding_model=embedding_model if embedding is not None else None,
             )
         )
 
@@ -158,6 +223,7 @@ async def insert_document_chunks(
     topic_id: int,
     chunks: list[str],
     embeddings: list[list[float] | None],
+    embedding_model: str | None = None,
 ) -> None:
     """Delete-then-insert (like `replace_note_chunks`) so a re-run -- a
     retried/re-enqueued indexing job for the same document -- never
@@ -168,8 +234,28 @@ async def insert_document_chunks(
             DocumentChunk(
                 topic_id=topic_id, document_id=document_id, chunk_index=index,
                 content=content, embedding=embedding,
+                embedding_model=embedding_model if embedding is not None else None,
             )
         )
+
+
+async def count_stale_chunks(db: AsyncSession, topic_id: int, current_embedding_model: str) -> int:
+    """Chunks whose vector came from a different provider/model than the
+    one configured now -- e.g. `EMBEDDING_PROVIDER` was switched from Gemini
+    to OpenAI. Chunks with no embedding at all (provider was down at index
+    time) aren't "stale" in this sense; they're covered by the existing
+    per-document retry flow instead."""
+    result = await db.execute(
+        select(func.count()).select_from(DocumentChunk).where(
+            DocumentChunk.topic_id == topic_id,
+            DocumentChunk.embedding.is_not(None),
+            or_(
+                DocumentChunk.embedding_model.is_(None),
+                DocumentChunk.embedding_model != current_embedding_model,
+            ),
+        )
+    )
+    return result.scalar_one()
 
 
 async def update_chunk_topic_for_note(db: AsyncSession, note_id: int, topic_id: int) -> None:
@@ -196,16 +282,30 @@ async def record_message_sources(
 
 
 async def create_document(
-    db: AsyncSession, *, topic_id: int, title: str, original_filename: str, content_type: str
+    db: AsyncSession, *, topic_id: int, title: str, original_filename: str, content_type: str,
+    file_size_bytes: int | None = None,
 ) -> Document:
     document = Document(
         topic_id=topic_id, title=title, original_filename=original_filename,
-        content_type=content_type, status="pending",
+        content_type=content_type, status="pending", file_size_bytes=file_size_bytes,
     )
     db.add(document)
     await db.flush()
     await db.refresh(document)
     return document
+
+
+async def sum_document_bytes_for_user(db: AsyncSession, user_id: int) -> int:
+    """Total storage a user currently occupies across every topic --
+    documents already deleted don't count (the row, and this sum with it,
+    is gone the moment `delete_document` removes it)."""
+    result = await db.execute(
+        select(func.coalesce(func.sum(Document.file_size_bytes), 0))
+        .select_from(Document)
+        .join(Topic, Topic.id == Document.topic_id)
+        .where(Topic.user_id == user_id)
+    )
+    return result.scalar_one()
 
 
 async def set_document_storage_path(db: AsyncSession, document_id: int, storage_path: str) -> None:

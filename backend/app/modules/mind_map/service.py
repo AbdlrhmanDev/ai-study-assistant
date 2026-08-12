@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core.exceptions import AppError
+from ...core.idempotency import cache_artifact, get_cached_artifact, stable_artifact_key
 from ..ai import provider
 from ..ai import repository as ai_repository
 from ..graph_builds import repository as build_status_repository
@@ -102,6 +103,7 @@ async def request_mind_map_rebuild(db: AsyncSession, topic_id: int, user_id: int
     the mind map itself. See knowledge_graph.service.request_graph_rebuild
     for the inline-vs-queued session-reuse rationale."""
     await topics_service.get_owned_topic_or_404(db, topic_id, user_id)
+    await build_status_service.assert_rebuild_allowed(db, topic_id=topic_id, build_type=BUILD_TYPE)
     await build_status_repository.set_status(db, topic_id=topic_id, build_type=BUILD_TYPE, status="pending")
     await db.commit()
 
@@ -114,19 +116,27 @@ async def rebuild_mind_map(db: AsyncSession, topic_id: int, user_id: int) -> dic
     topic = await topics_service.get_owned_topic_or_404(db, topic_id, user_id)
     evidence = await _gather_evidence(db, topic_id, user_id)
     evidence_block = _build_evidence_block(evidence)
-    prompt = f"TOPIC: {topic.title}\n\nMATERIAL\n{evidence_block}"
 
-    try:
-        raw_answer, _provider_name, _model_name = await provider.generate(prompt, instructions=MIND_MAP_INSTRUCTIONS)
-    except AppError:
-        raise
-    except Exception as error:
-        raise AppError("AI tutor is temporarily unavailable", 502, {"cause": str(error)}) from error
+    signature = await topics_service.material_signature(db, topic_id, user_id)
+    cache_key = stable_artifact_key("mind_map", topic_id, signature, evidence_block)
+    cached = await get_cached_artifact(user_id, "mind_map", cache_key)
+    if cached is not None:
+        root = cached
+    else:
+        prompt = f"TOPIC: {topic.title}\n\nMATERIAL\n{evidence_block}"
 
-    parsed = _extract_json_object(raw_answer)
-    root = structure.normalize_mind_map(parsed)
-    if root is None:
-        raise MindMapParseError()
+        try:
+            raw_answer, _provider_name, _model_name = await provider.generate(prompt, instructions=MIND_MAP_INSTRUCTIONS)
+        except AppError:
+            raise
+        except Exception as error:
+            raise AppError("AI tutor is temporarily unavailable", 502, {"cause": str(error)}) from error
+
+        parsed = _extract_json_object(raw_answer)
+        root = structure.normalize_mind_map(parsed)
+        if root is None:
+            raise MindMapParseError()
+        await cache_artifact(user_id, "mind_map", cache_key, root)
 
     mind_map = await repository.upsert(db, topic_id=topic_id, structure=root)
     await study_history_repository.record_activity_safely(

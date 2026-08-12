@@ -53,6 +53,7 @@ export type Quiz = {
   adaptive: boolean;
   timed: boolean;
   time_limit_seconds: number | null;
+  status: "draft" | "published";
   created_at: string;
 };
 
@@ -84,6 +85,15 @@ type QuestionForTaking = {
   options: Record<string, unknown> | null;
   difficultyScore: number;
 };
+
+type QuestionForReview = QuestionForTaking & {
+  correctAnswer: Record<string, unknown>;
+  explanation: string;
+  sourceType: "note" | "document" | null;
+  sourceTitle: string | null;
+};
+
+type QuestionAnalytics = { questionId: number; prompt: string; concept: string; timesAnswered: number; correctCount: number; accuracy: number | null };
 
 type ConceptPerformance = { concept: string; correct: number; total: number; accuracy: number };
 
@@ -239,6 +249,7 @@ export function QuizTopicPage() {
   const [selectedTypes, setSelectedTypes] = useState<QuestionType[]>(ALL_QUESTION_TYPES);
   const [timed, setTimed] = useState(false);
   const [adaptive, setAdaptive] = useState(false);
+  const [preview, setPreview] = useState(false);
   const [saving, setSaving] = useState(false);
   const [genError, setGenError] = useState("");
   const [deletingQuiz, setDeletingQuiz] = useState<QuizListEntry | null>(null);
@@ -283,6 +294,17 @@ export function QuizTopicPage() {
     );
   }
 
+  async function resolveBalancedDifficulty(): Promise<Difficulty> {
+    try {
+      const calibration = await api<{
+        averages: { recommendedDifficulty: Difficulty | null };
+      }>(`/topics/${topicId}/quiz-analytics`);
+      return calibration.averages.recommendedDifficulty ?? "mixed";
+    } catch {
+      return "mixed";
+    }
+  }
+
   async function generateQuiz(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!selectedTypes.length) {
@@ -293,16 +315,21 @@ export function QuizTopicPage() {
     setSaving(true);
     setGenError("");
     try {
+      let difficulty = data.get("difficulty") as Difficulty | "auto";
+      if (difficulty === "auto") {
+        difficulty = await resolveBalancedDifficulty();
+      }
       const result = await api<{ quiz: Quiz }>(`/topics/${topicId}/quizzes/generate`, {
         method: "POST",
         headers: idempotencyHeader(),
         body: JSON.stringify({
           source,
           count: Number(data.get("count")) || 10,
-          difficulty: data.get("difficulty"),
+          difficulty,
           questionTypes: selectedTypes,
           timed,
           adaptive,
+          preview,
           ...(timed ? { timeLimitSeconds: Number(data.get("timeLimitSeconds")) || 600 } : {}),
           ...(source === "note" ? { noteId: Number(data.get("noteId")) } : {}),
           ...(source === "document" ? { documentId: Number(data.get("documentId")) } : {}),
@@ -310,7 +337,12 @@ export function QuizTopicPage() {
         }),
       });
       setShowGenerate(false);
-      router.push(withEmbedded(`/quizzes/take?quizId=${result.quiz.id}`, embedded));
+      router.push(
+        withEmbedded(
+          preview ? `/quizzes/review?quizId=${result.quiz.id}` : `/quizzes/take?quizId=${result.quiz.id}`,
+          embedded,
+        ),
+      );
     } catch (requestError) {
       setGenError(messageFromError(requestError));
     } finally {
@@ -352,6 +384,7 @@ export function QuizTopicPage() {
                 <div>
                   <h3>{quiz.title}</h3>
                   <div className="flashcard-meta">
+                    {quiz.status === "draft" && <span className="quiz-difficulty-badge">Draft</span>}
                     <span className="quiz-difficulty-badge">{quiz.difficulty}</span>
                     {quiz.adaptive && <span className="quiz-adaptive-badge"><Zap size={11} /> Adaptive</span>}
                     <small>{quiz.questionCount} question{quiz.questionCount === 1 ? "" : "s"}</small>
@@ -363,9 +396,15 @@ export function QuizTopicPage() {
                 </div>
               </div>
               <div className="note-actions">
-                <Link className="note-action edit-action" href={withEmbedded(`/quizzes/take?quizId=${quiz.id}`, embedded)}>
-                  <span><Play size={12} fill="currentColor" /></span>{quiz.latestAttempt ? "Retake" : "Take quiz"}
-                </Link>
+                {quiz.status === "draft" ? (
+                  <Link className="note-action edit-action" href={withEmbedded(`/quizzes/review?quizId=${quiz.id}`, embedded)}>
+                    <span><ListChecks size={12} /></span>Review &amp; publish
+                  </Link>
+                ) : (
+                  <Link className="note-action edit-action" href={withEmbedded(`/quizzes/take?quizId=${quiz.id}`, embedded)}>
+                    <span><Play size={12} fill="currentColor" /></span>{quiz.latestAttempt ? "Retake" : "Take quiz"}
+                  </Link>
+                )}
                 {quiz.latestAttempt && (
                   <Link className="note-action" href={withEmbedded(`/quizzes/results?attemptId=${quiz.latestAttempt.id}&topicId=${topicId}`, embedded)}>
                     <span><BarChart3 size={13} /></span>Last results
@@ -445,7 +484,8 @@ export function QuizTopicPage() {
             <div className="quiz-generate-row">
               <label>Number of questions<input type="number" name="count" min={1} max={30} defaultValue={10} /></label>
               <label>Difficulty
-                <select name="difficulty" defaultValue="medium">
+                <select name="difficulty" defaultValue="auto">
+                  <option value="auto">Auto (balanced)</option>
                   <option value="easy">Easy</option>
                   <option value="medium">Medium</option>
                   <option value="hard">Hard</option>
@@ -463,6 +503,10 @@ export function QuizTopicPage() {
             <label className="check">
               <input type="checkbox" checked={adaptive} onChange={(event) => setAdaptive(event.target.checked)} /> Adaptive difficulty
               <span className="modal-hint quiz-adaptive-hint">Questions get harder or easier as you answer, based on how you&apos;re doing.</span>
+            </label>
+            <label className="check">
+              <input type="checkbox" checked={preview} onChange={(event) => setPreview(event.target.checked)} /> Preview before publishing
+              <span className="modal-hint quiz-adaptive-hint">Review, edit, or regenerate individual questions before this quiz becomes takeable.</span>
             </label>
 
             <div className="modal-actions">
@@ -490,6 +534,194 @@ export function QuizTopicPage() {
           </div>
         </div>
       )}
+    </PageShell>
+  );
+}
+
+// --------------------------------------------------------------------------
+// Draft review -- generated with `preview: true`; lets the owner edit,
+// regenerate, or drop individual questions before the quiz can be taken.
+// --------------------------------------------------------------------------
+
+export function QuizReviewPage() {
+  const params = useSearchParams();
+  const router = useRouter();
+  const handleAuthFailure = useAuthFailure();
+  const quizId = Number(params.get("quizId"));
+  const embedded = params.get("embedded") === "1";
+
+  const [quiz, setQuiz] = useState<Quiz | null>(null);
+  const [questions, setQuestions] = useState<QuestionForReview[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [publishing, setPublishing] = useState(false);
+  const [busyQuestionId, setBusyQuestionId] = useState<number | null>(null);
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editPrompt, setEditPrompt] = useState("");
+
+  const load = useCallback(async () => {
+    if (!Number.isInteger(quizId) || quizId < 1) {
+      router.replace(withEmbedded("/quizzes", embedded));
+      return;
+    }
+    setLoading(true);
+    setError("");
+    try {
+      const result = await api<{ quiz: Quiz; questions: QuestionForReview[] }>(`/quizzes/${quizId}`);
+      if (result.quiz.status !== "draft") {
+        router.replace(withEmbedded(`/quizzes/take?quizId=${quizId}`, embedded));
+        return;
+      }
+      setQuiz(result.quiz);
+      setQuestions(result.questions);
+    } catch (requestError) {
+      handleAuthFailure(requestError);
+      setError(messageFromError(requestError));
+    } finally {
+      setLoading(false);
+    }
+  }, [embedded, handleAuthFailure, quizId, router]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => void load(), 0);
+    return () => window.clearTimeout(timer);
+  }, [load]);
+
+  function startEditing(question: QuestionForReview) {
+    setEditingId(question.id);
+    setEditPrompt(question.prompt);
+  }
+
+  async function saveEdit(questionId: number) {
+    setBusyQuestionId(questionId);
+    setError("");
+    try {
+      const updated = await api<QuestionForReview>(`/quizzes/${quizId}/questions/${questionId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ prompt: editPrompt }),
+      });
+      setQuestions((current) => current.map((question) => (question.id === questionId ? updated : question)));
+      setEditingId(null);
+    } catch (requestError) {
+      setError(messageFromError(requestError));
+    } finally {
+      setBusyQuestionId(null);
+    }
+  }
+
+  async function regenerateQuestion(questionId: number) {
+    setBusyQuestionId(questionId);
+    setError("");
+    try {
+      const updated = await api<QuestionForReview>(`/quizzes/${quizId}/questions/${questionId}/regenerate`, {
+        method: "POST",
+      });
+      setQuestions((current) => current.map((question) => (question.id === questionId ? updated : question)));
+    } catch (requestError) {
+      setError(messageFromError(requestError));
+    } finally {
+      setBusyQuestionId(null);
+    }
+  }
+
+  async function deleteQuestion(questionId: number) {
+    setBusyQuestionId(questionId);
+    setError("");
+    try {
+      await api<null>(`/quizzes/${quizId}/questions/${questionId}`, { method: "DELETE" });
+      setQuestions((current) => current.filter((question) => question.id !== questionId));
+    } catch (requestError) {
+      setError(messageFromError(requestError));
+    } finally {
+      setBusyQuestionId(null);
+    }
+  }
+
+  async function publishQuiz() {
+    if (!quiz) return;
+    setPublishing(true);
+    setError("");
+    try {
+      await api<{ quiz: Quiz }>(`/quizzes/${quizId}/publish`, { method: "POST" });
+      router.push(withEmbedded(`/quizzes/topic?topicId=${quiz.topic_id}`, embedded));
+    } catch (requestError) {
+      setError(messageFromError(requestError));
+    } finally {
+      setPublishing(false);
+    }
+  }
+
+  if (loading) {
+    return (
+      <PageShell className="quiz-review-page" title="Review quiz" subtitle="Loading this draft…">
+        <LoadingState label="Loading draft…" />
+      </PageShell>
+    );
+  }
+  if (!quiz) {
+    return (
+      <PageShell className="quiz-review-page" title="Review quiz" subtitle="This draft couldn't be loaded.">
+        {error && <p className="page-error" role="alert">{error}</p>}
+      </PageShell>
+    );
+  }
+
+  return (
+    <PageShell
+      className="quiz-review-page"
+      title={quiz.title}
+      subtitle="Review, edit, or regenerate any question before publishing this quiz."
+      action={<Link className="back-topics" href={withEmbedded(`/quizzes/topic?topicId=${quiz.topic_id}`, embedded)}><ArrowLeft size={13} /> Back to quizzes</Link>}
+    >
+      {error && <p className="page-error" role="alert">{error}</p>}
+      <div className="notes-list quiz-review-list">
+        {questions.map((question, index) => (
+          <article key={question.id} className="quiz-review-item">
+            <div className="flashcard-meta">
+              <span className="quiz-difficulty-badge">{index + 1}. {QUESTION_TYPE_LABELS[question.questionType]}</span>
+              <span className="quiz-difficulty-badge">{question.concept}</span>
+            </div>
+            {editingId === question.id ? (
+              <div className="quiz-review-edit">
+                <textarea value={editPrompt} onChange={(event) => setEditPrompt(event.target.value)} rows={2} />
+                <div className="modal-actions">
+                  <button type="button" className="button button-secondary" onClick={() => setEditingId(null)}>Cancel</button>
+                  <button
+                    type="button" className="button button-primary" disabled={busyQuestionId === question.id}
+                    onClick={() => void saveEdit(question.id)}
+                  >
+                    {busyQuestionId === question.id ? "Saving…" : "Save"}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <p className="quiz-review-prompt">{question.prompt}</p>
+            )}
+            <p className="quiz-review-explanation"><strong>Explanation:</strong> {question.explanation}</p>
+            <div className="note-actions">
+              <button type="button" className="note-action" disabled={busyQuestionId === question.id} onClick={() => startEditing(question)}>Edit</button>
+              <button
+                type="button" className="note-action" disabled={busyQuestionId === question.id}
+                onClick={() => void regenerateQuestion(question.id)}
+              >
+                {busyQuestionId === question.id ? "Regenerating…" : "Regenerate"}
+              </button>
+              <button
+                type="button" className="danger-link" disabled={busyQuestionId === question.id}
+                onClick={() => void deleteQuestion(question.id)}
+              >
+                Delete
+              </button>
+            </div>
+          </article>
+        ))}
+        {!questions.length && <div className="empty">No questions left in this draft — delete it and generate a new one.</div>}
+      </div>
+      <div className="modal-actions quiz-review-publish-row">
+        <button type="button" className="button button-primary" disabled={publishing || !questions.length} onClick={() => void publishQuiz()}>
+          {publishing ? "Publishing…" : "Publish quiz"}
+        </button>
+      </div>
     </PageShell>
   );
 }
@@ -890,6 +1122,8 @@ export function QuizResultsPage() {
   const [diagnoses, setDiagnoses] = useState<Record<number, { mistakeType: string; diagnosis: string }>>({});
   const [loadingDiagnosisFor, setLoadingDiagnosisFor] = useState<number | null>(null);
   const [drillingFor, setDrillingFor] = useState<number | null>(null);
+  const [analytics, setAnalytics] = useState<QuestionAnalytics[] | null>(null);
+  const [analyticsLoading, setAnalyticsLoading] = useState(false);
 
   const load = useCallback(async () => {
     if (!Number.isInteger(attemptId) || attemptId < 1) {
@@ -912,6 +1146,19 @@ export function QuizResultsPage() {
     const timer = window.setTimeout(() => void load(), 0);
     return () => window.clearTimeout(timer);
   }, [load]);
+
+  async function loadAnalytics() {
+    if (!results || analytics || analyticsLoading) return;
+    setAnalyticsLoading(true);
+    try {
+      const result = await api<{ questions: QuestionAnalytics[] }>(`/quizzes/${results.quizId}/analytics`);
+      setAnalytics(result.questions);
+    } catch (requestError) {
+      setError(messageFromError(requestError));
+    } finally {
+      setAnalyticsLoading(false);
+    }
+  }
 
   async function generateFollowUp() {
     if (!hasTopic) return;
@@ -1021,6 +1268,27 @@ export function QuizResultsPage() {
               <button className="button button-primary quiz-follow-up-button" disabled={generatingFollowUp} onClick={() => void generateFollowUp()}>
                 {generatingFollowUp ? "Generating…" : <><Sparkles size={14} /> Generate follow-up quiz on weak areas</>}
               </button>
+            )}
+          </section>
+
+          <section className="notes-panel quiz-concept-panel">
+            <div className="section-head">
+              <div><h2>Item analytics</h2><p>How this quiz&apos;s questions have performed across every attempt</p></div>
+              {!analytics && (
+                <button type="button" className="button button-secondary" disabled={analyticsLoading} onClick={() => void loadAnalytics()}>
+                  {analyticsLoading ? "Loading…" : <><BarChart3 size={14} /> Show item analytics</>}
+                </button>
+              )}
+            </div>
+            {analytics && (
+              <div className="quiz-analytics-list">
+                {analytics.map((entry) => (
+                  <div className="quiz-analytics-row" key={entry.questionId}>
+                    <span>{entry.prompt}</span>
+                    <span>{entry.timesAnswered ? `${Math.round((entry.accuracy ?? 0) * 100)}% correct (${entry.timesAnswered} answer${entry.timesAnswered === 1 ? "" : "s"})` : "Not answered yet"}</span>
+                  </div>
+                ))}
+              </div>
             )}
           </section>
 

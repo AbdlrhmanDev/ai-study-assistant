@@ -6,7 +6,7 @@ from ...core.security import ai_rate_limit_key, limiter
 from ...shared.responses import no_content
 from . import service
 from .model import Document
-from .schema import ChatIn, DocumentOut
+from .schema import ChatIn, DocumentOut, MessageFeedbackIn, SourceClickIn
 
 router = APIRouter(tags=["ai"])
 
@@ -69,6 +69,26 @@ async def clear_message_history(topic_id: int, db: DbSession, user: CurrentUser)
     return {"deletedCount": deleted}
 
 
+@router.put("/ai/messages/{message_id}/feedback")
+async def submit_message_feedback(
+    message_id: int, payload: MessageFeedbackIn, db: DbSession, user: CurrentUser
+):
+    return await service.submit_message_feedback(
+        db, message_id, user["id"], payload.rating, payload.reason, payload.comment
+    )
+
+
+@router.post("/ai/messages/{message_id}/sources/click", status_code=status.HTTP_202_ACCEPTED)
+async def record_source_click(
+    message_id: int, payload: SourceClickIn, db: DbSession, user: CurrentUser
+):
+    await service.record_source_click(
+        db, message_id, user["id"],
+        source_type=payload.sourceType, source_id=payload.sourceId, score=payload.score,
+    )
+    return {"accepted": True}
+
+
 def _serialize_document(document: Document) -> dict:
     return DocumentOut.model_validate(document).model_dump(mode="json")
 
@@ -102,6 +122,11 @@ async def list_documents(topic_id: int, db: DbSession, user: CurrentUser):
     return {"documents": [_serialize_document(document) for document in documents]}
 
 
+@router.get("/documents/storage-usage")
+async def storage_usage(db: DbSession, user: CurrentUser):
+    return await service.get_storage_usage(db, user["id"])
+
+
 @router.get("/documents/{document_id}")
 async def get_document(document_id: int, db: DbSession, user: CurrentUser):
     document = await service.get_document(db, document_id, user["id"])
@@ -119,7 +144,22 @@ async def document_download_url(document_id: int, db: DbSession, user: CurrentUs
     return {"url": await service.get_document_download_url(db, document_id, user["id"])}
 
 
+@router.get("/documents/{document_id}/preview")
+async def document_preview(document_id: int, db: DbSession, user: CurrentUser):
+    return await service.get_document_preview(db, document_id, user["id"])
+
+
 @router.delete("/documents/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_document(document_id: int, db: DbSession, user: CurrentUser):
     await service.delete_document(db, document_id, user["id"])
     return no_content()
+
+
+@router.get("/topics/{topic_id}/reindex-status")
+async def reindex_status(topic_id: int, db: DbSession, user: CurrentUser):
+    return await service.get_reindex_status(db, topic_id, user["id"])
+
+
+@router.post("/topics/{topic_id}/reindex", status_code=status.HTTP_202_ACCEPTED)
+async def reindex_topic(topic_id: int, db: DbSession, user: CurrentUser):
+    return await service.reindex_topic(db, topic_id, user["id"])

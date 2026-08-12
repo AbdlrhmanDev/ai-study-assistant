@@ -38,6 +38,7 @@ class Exam(Base):
     )
     title: Mapped[str] = mapped_column(String(200), nullable=False)
     time_limit_seconds: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, server_default="published")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
@@ -45,6 +46,7 @@ class Exam(Base):
     __table_args__ = (
         CheckConstraint("char_length(trim(title)) > 0", name="exams_title_not_empty"),
         CheckConstraint("time_limit_seconds > 0", name="exams_time_limit_positive"),
+        CheckConstraint("status IN ('draft', 'published')", name="exams_status_check"),
         Index("exams_topic_id_index", "topic_id"),
     )
 

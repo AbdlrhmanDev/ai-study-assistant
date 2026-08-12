@@ -58,3 +58,18 @@ class QuizAnswerNotFoundError(AppError):
 class AnswerAlreadyCorrectError(AppError):
     def __init__(self) -> None:
         super().__init__("This answer was already correct -- nothing to diagnose", 409)
+
+
+class QuizNotEditableError(AppError):
+    def __init__(self) -> None:
+        super().__init__("Only draft quizzes can be edited or regenerated -- publish locks it in", 409)
+
+
+class QuizNotPublishedError(AppError):
+    def __init__(self) -> None:
+        super().__init__("Publish this quiz before starting an attempt", 409)
+
+
+class InvalidQuestionEditError(AppError):
+    def __init__(self) -> None:
+        super().__init__("That edit isn't valid for this question's type", 422)

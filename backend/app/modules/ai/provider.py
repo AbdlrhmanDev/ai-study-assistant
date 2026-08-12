@@ -121,23 +121,28 @@ async def _run_provider_with_retry(call, counters: dict | None = None) -> tuple[
     raise RuntimeError("AI provider retry loop exited unexpectedly")
 
 
-def _available_providers() -> list[str]:
+def _available_providers(feature: str | None = None) -> list[str]:
     settings = get_settings()
     keys = {
         "gemini": settings.gemini_api_key,
         "groq": settings.groq_api_key,
         "openai": settings.openai_api_key,
     }
-    return [settings.ai_provider] + [
+    primary = settings.feature_providers.get(feature or "", settings.ai_provider)
+    ordered = [primary, settings.ai_provider]
+    return list(dict.fromkeys(ordered + [
         name for name in ("gemini", "groq", "openai")
-        if name != settings.ai_provider and keys[name]
-    ]
+        if keys[name]
+    ]))
 
 
-async def _run_provider_with_fallback(call_factory, counters: dict | None = None) -> tuple[str, str, str]:
+async def _run_provider_with_fallback(call_factory, counters: dict | None = None, feature: str | None = None) -> tuple[str, str, str]:
     last_error: Exception | None = None
     failures: list[Exception] = []
-    for provider_name in _available_providers():
+    # Keep the no-feature call shape compatible with direct integrations and
+    # tests that replace the provider-order helper.
+    available = _available_providers() if feature is None else _available_providers(feature)
+    for provider_name in available:
         try:
             return await _run_provider_with_retry(call_factory(provider_name), counters)
         except Exception as error:
@@ -262,12 +267,14 @@ def _generate_sync(instructions: str, prompt: str, provider_name: str | None = N
 async def generate(prompt: str, instructions: str = INSTRUCTIONS, feature: str | None = None) -> tuple[str, str, str]:
     from ..usage import service as usage_service
     from ...core.metrics import AI_LATENCY, AI_REQUESTS
-    await usage_service.enforce_quota(feature)
+    resolved_feature = feature or usage_service.infer_feature()
+    await usage_service.enforce_quota(resolved_feature)
     started = time.perf_counter()
     counters: dict = {}
     try:
         result = await _run_provider_with_fallback(
             lambda provider_name: partial(_generate_sync, instructions, prompt, provider_name), counters,
+            resolved_feature,
         )
     except Exception:
         latency = time.perf_counter() - started
@@ -276,12 +283,12 @@ async def generate(prompt: str, instructions: str = INSTRUCTIONS, feature: str |
         await usage_service.record(
             provider=settings.ai_provider, model="unknown", prompt=prompt, output="",
             latency_ms=round(latency * 1000), retries=counters.get("retries", 0),
-            fallbacks=counters.get("fallbacks", 0), outcome="failed", feature=feature,
+            fallbacks=counters.get("fallbacks", 0), outcome="failed", feature=resolved_feature,
         )
         # Provider/model attribution and latency only -- never the prompt or
         # response text, which can contain private notes/documents.
         logger.warning(
-            "ai_provider_call", feature=feature, provider=settings.ai_provider,
+            "ai_provider_call", feature=resolved_feature, provider=settings.ai_provider,
             latency_ms=round(latency * 1000), retries=counters.get("retries", 0),
             fallbacks=counters.get("fallbacks", 0), outcome="failed",
         )
@@ -293,10 +300,10 @@ async def generate(prompt: str, instructions: str = INSTRUCTIONS, feature: str |
     await usage_service.record(
         provider=provider_name, model=model_name, prompt=prompt, output=answer,
         latency_ms=round(latency * 1000), retries=counters.get("retries", 0),
-        fallbacks=counters.get("fallbacks", 0), feature=feature,
+        fallbacks=counters.get("fallbacks", 0), feature=resolved_feature,
     )
     logger.info(
-        "ai_provider_call", feature=feature, provider=provider_name, model=model_name,
+        "ai_provider_call", feature=resolved_feature, provider=provider_name, model=model_name,
         latency_ms=round(latency * 1000), retries=counters.get("retries", 0),
         fallbacks=counters.get("fallbacks", 0), outcome="success",
     )

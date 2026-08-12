@@ -1,3 +1,5 @@
+import csv
+import io
 import json
 import re
 from datetime import datetime, timezone
@@ -17,7 +19,9 @@ from ..study_history import repository as study_history_repository
 from ..topics import service as topics_service
 from . import repository, scheduler
 from .exceptions import (
+    EmptyFlashcardImportError,
     FlashcardGenerationParseError,
+    FlashcardImportTooLargeError,
     FlashcardNotFoundError,
     FlashcardNotRegeneratableError,
     FlashcardSourceNotFoundError,
@@ -238,6 +242,78 @@ async def create_flashcard(
     return flashcard, source_type, source_title
 
 
+MAX_IMPORT_ROWS = 500
+
+
+async def import_flashcards(db: AsyncSession, topic_id: int, user_id: int, raw_bytes: bytes) -> dict:
+    """Bulk-create cards from a CSV upload. Accepts the same shape produced
+    by `GET /topics/{topic_id}/flashcards/export` (question, answer,
+    explanation, concept, ...extra columns ignored) so export-then-edit-
+    then-import round-trips cleanly; only `question` and `answer` are
+    required."""
+    await topics_service.get_owned_topic_or_404(db, topic_id, user_id)
+
+    try:
+        text = raw_bytes.decode("utf-8-sig")
+    except UnicodeDecodeError as error:
+        raise EmptyFlashcardImportError() from error
+
+    reader = csv.DictReader(io.StringIO(text))
+    if reader.fieldnames is None or "question" not in reader.fieldnames or "answer" not in reader.fieldnames:
+        raise EmptyFlashcardImportError()
+
+    rows = list(reader)
+    if len(rows) > MAX_IMPORT_ROWS:
+        raise FlashcardImportTooLargeError(MAX_IMPORT_ROWS)
+
+    created = 0
+    skipped = 0
+    for row in rows:
+        question = (row.get("question") or "").strip()
+        answer = (row.get("answer") or "").strip()
+        if not question or not answer:
+            skipped += 1
+            continue
+        explanation = (row.get("explanation") or "").strip() or None
+        concept = (row.get("concept") or "").strip()[:200] or None
+        await repository.create(
+            db, topic_id=topic_id, question=question[:2000], answer=answer[:4000],
+            explanation=explanation, origin="manual", concept=concept,
+        )
+        created += 1
+
+    if created == 0:
+        raise EmptyFlashcardImportError()
+
+    await study_history_repository.record_activity_safely(
+        db, user_id=user_id, topic_id=topic_id, activity_type="flashcard_created",
+        description=f"Imported {created} flashcards from CSV",
+    )
+    await db.commit()
+    return {"created": created, "skipped": skipped}
+
+
+BULK_ACTIONS = {"archive": "archived", "unarchive": "active"}
+
+
+async def bulk_update_flashcards(
+    db: AsyncSession, topic_id: int, user_id: int, flashcard_ids: list[int], action: str
+) -> int:
+    await topics_service.get_owned_topic_or_404(db, topic_id, user_id)
+    flashcards = await repository.bulk_get_owned(db, topic_id, user_id, flashcard_ids)
+    if action == "delete":
+        await repository.bulk_delete(db, flashcards)
+    else:
+        await repository.bulk_set_status(db, flashcards, BULK_ACTIONS[action])
+    await db.commit()
+    return len(flashcards)
+
+
+async def get_deck_health(db: AsyncSession, topic_id: int, user_id: int) -> dict:
+    await topics_service.get_owned_topic_or_404(db, topic_id, user_id)
+    return await repository.deck_health(db, topic_id)
+
+
 async def update_flashcard(
     db: AsyncSession, flashcard_id: int, user_id: int, payload: FlashcardUpdate
 ) -> FlashcardWithSource:
@@ -320,6 +396,8 @@ async def review_flashcard(
         db, user_id=user_id, topic_id=flashcard.topic_id, activity_type="flashcard_reviewed",
         description=f"Reviewed a flashcard: {rating}",
     )
+    from ..growth.service import add_event
+    add_event(db, user_id, "first_flashcard_review", {"topicId": flashcard.topic_id})
     await db.commit()
     await db.refresh(flashcard)
     source_type, source_title = await _resolve_source(db, flashcard)

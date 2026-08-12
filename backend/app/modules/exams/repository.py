@@ -32,6 +32,128 @@ def _source_join(stmt):
 # --------------------------------------------------------------------------
 
 
+async def list_existing_prompts_for_topic(db: AsyncSession, topic_id: int, limit: int = 150) -> list[str]:
+    """A bounded sample of this topic's already-asked exam prompts -- fed
+    back into the generation prompt so the AI avoids repeating them."""
+    stmt = (
+        select(ExamQuestion.prompt)
+        .join(Exam, Exam.id == ExamQuestion.exam_id)
+        .where(Exam.topic_id == topic_id)
+        .order_by(ExamQuestion.created_at.desc())
+        .limit(limit)
+    )
+    result = await db.execute(stmt)
+    return [prompt for (prompt,) in result.all()]
+
+
+async def question_analytics(db: AsyncSession, exam_id: int) -> list[dict]:
+    """Per-question stats across every attempt at this exam. `pointsEarned`/
+    `pointsPossible` are summed only over graded answers -- objective
+    questions grade instantly, rubric questions (essay/case_study/coding)
+    only once the attempt is finalized, so an in-progress rubric answer
+    doesn't skew the average toward zero."""
+    graded = ExamAnswer.points_earned.is_not(None)
+    stmt = (
+        select(
+            ExamQuestion.id,
+            ExamQuestion.order_index,
+            ExamQuestion.prompt,
+            ExamQuestion.concept,
+            func.count(ExamAnswer.id).label("times_answered"),
+            func.sum(case((graded, ExamAnswer.points_earned), else_=0)).label("points_earned_sum"),
+            func.sum(case((graded, ExamAnswer.points_possible), else_=0)).label("points_possible_sum"),
+        )
+        .outerjoin(ExamAnswer, ExamAnswer.question_id == ExamQuestion.id)
+        .where(ExamQuestion.exam_id == exam_id)
+        .group_by(ExamQuestion.id, ExamQuestion.order_index)
+        .order_by(ExamQuestion.order_index)
+    )
+    result = await db.execute(stmt)
+    return [
+        {
+            "questionId": row.id,
+            "prompt": row.prompt,
+            "concept": row.concept,
+            "timesAnswered": row.times_answered,
+            "pointsEarned": float(row.points_earned_sum or 0),
+            "pointsPossible": float(row.points_possible_sum or 0),
+        }
+        for row in result
+    ]
+
+
+async def topic_exam_question_stats(
+    db: AsyncSession, topic_id: int, user_id: int
+) -> list[dict]:
+    """Per-question stats across the user's graded exam answers in a topic.
+    `points_earned`/`points_possible` are summed only over graded answers so
+    in-progress rubric answers don't skew the average."""
+    graded = ExamAnswer.points_earned.is_not(None)
+    stmt = (
+        select(
+            ExamQuestion.id,
+            ExamQuestion.order_index,
+            ExamQuestion.prompt,
+            ExamQuestion.concept,
+            ExamQuestion.question_type,
+            func.count(ExamAnswer.id).label("times_answered"),
+            func.sum(case((graded, ExamAnswer.points_earned), else_=0)).label("points_earned_sum"),
+            func.sum(case((graded, ExamAnswer.points_possible), else_=0)).label("points_possible_sum"),
+        )
+        .join(Exam, Exam.id == ExamQuestion.exam_id)
+        .join(ExamAttempt, ExamAttempt.exam_id == Exam.id)
+        .join(ExamAnswer, (ExamAnswer.attempt_id == ExamAttempt.id) & (ExamAnswer.question_id == ExamQuestion.id))
+        .where(Exam.topic_id == topic_id, ExamAttempt.user_id == user_id)
+        .group_by(ExamQuestion.id, ExamQuestion.order_index)
+        .order_by(ExamQuestion.order_index)
+    )
+    result = await db.execute(stmt)
+    return [
+        {
+            "questionId": row.id,
+            "prompt": row.prompt,
+            "concept": row.concept,
+            "questionType": row.question_type,
+            "timesAnswered": row.times_answered,
+            "pointsEarned": float(row.points_earned_sum or 0),
+            "pointsPossible": float(row.points_possible_sum or 0),
+        }
+        for row in result
+    ]
+
+
+async def per_question_answer_times(
+    db: AsyncSession, topic_id: int, user_id: int
+) -> dict[int, list[float]]:
+    """Seconds spent per question, derived from the gap between consecutive
+    answers inside each of the user's attempts on exams in a topic (the first
+    answer of an attempt is measured from `started_at`)."""
+    attempts_rows = await db.execute(
+        select(ExamAttempt.id, ExamAttempt.started_at)
+        .join(Exam, Exam.id == ExamAttempt.exam_id)
+        .where(Exam.topic_id == topic_id, ExamAttempt.user_id == user_id)
+    )
+    starts = {attempt_id: started_at for attempt_id, started_at in attempts_rows.all()}
+
+    answers_rows = await db.execute(
+        select(ExamAnswer.attempt_id, ExamAnswer.question_id, ExamAnswer.answered_at)
+        .join(ExamAttempt, ExamAttempt.id == ExamAnswer.attempt_id)
+        .join(Exam, Exam.id == ExamAttempt.exam_id)
+        .where(Exam.topic_id == topic_id, ExamAttempt.user_id == user_id)
+        .order_by(ExamAnswer.attempt_id, ExamAnswer.answered_at)
+    )
+    rows = answers_rows.all()
+
+    times: dict[int, list[float]] = {}
+    previous_per_attempt: dict[int, datetime] = {}
+    for attempt_id, question_id, answered_at in rows:
+        previous = previous_per_attempt.get(attempt_id, starts.get(attempt_id))
+        if previous is not None:
+            times.setdefault(question_id, []).append(max((answered_at - previous).total_seconds(), 0))
+        previous_per_attempt[attempt_id] = answered_at
+    return times
+
+
 async def create_exam(db: AsyncSession, *, topic_id: int, title: str, time_limit_seconds: int) -> Exam:
     exam = Exam(topic_id=topic_id, title=title, time_limit_seconds=time_limit_seconds)
     db.add(exam)
@@ -68,6 +190,13 @@ async def create_question(
 
 async def get_exam_by_id(db: AsyncSession, exam_id: int) -> Exam | None:
     return await db.get(Exam, exam_id)
+
+
+async def set_exam_status(db: AsyncSession, exam: Exam, *, status: str) -> Exam:
+    exam.status = status
+    await db.flush()
+    await db.refresh(exam)
+    return exam
 
 
 async def get_exam_for_user(db: AsyncSession, exam_id: int, user_id: int) -> Exam | None:
@@ -143,6 +272,46 @@ async def get_question_for_exam(
     if row is None:
         return None
     return row.ExamQuestion, row.source_type, row.source_title
+
+
+async def update_question(
+    db: AsyncSession,
+    question: ExamQuestion,
+    *,
+    prompt: str | None = None,
+    explanation: str | None = None,
+    concept: str | None = None,
+    blooms_level: str | None = None,
+    options: dict | None = None,
+    correct_answer: dict | None = None,
+    rubric: list | None = None,
+    update_answer_shape: bool = False,
+    source_note_id: int | None = None,
+    source_document_id: int | None = None,
+    update_source: bool = False,
+) -> ExamQuestion:
+    if prompt is not None:
+        question.prompt = prompt
+    if explanation is not None:
+        question.explanation = explanation
+    if concept is not None:
+        question.concept = concept
+    if blooms_level is not None:
+        question.blooms_level = blooms_level
+    if update_answer_shape:
+        question.options = options
+        question.correct_answer = correct_answer
+        question.rubric = rubric
+    if update_source:
+        question.source_note_id = source_note_id
+        question.source_document_id = source_document_id
+    await db.flush()
+    await db.refresh(question)
+    return question
+
+
+async def delete_question(db: AsyncSession, question: ExamQuestion) -> None:
+    await db.delete(question)
 
 
 # --------------------------------------------------------------------------

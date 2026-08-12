@@ -1,6 +1,8 @@
 import json
+from datetime import datetime, timedelta, timezone
 
 from httpx import AsyncClient
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.notes.model import Note
@@ -103,6 +105,61 @@ async def test_get_concept_returns_detail(
 
     assert response.status_code == 200
     assert response.json()["id"] == concept_id
+
+
+async def test_rebuild_graph_immediately_after_completion_is_cooldown_gated(
+    authed_client: AsyncClient, db_session: AsyncSession, test_user: User, mock_ai_generate
+):
+    mock_ai_generate(MOCK_GRAPH_RESPONSE)
+    topic = await _create_topic_with_note(db_session, test_user)
+    first = await authed_client.post(f"/api/v1/topics/{topic.id}/knowledge-graph/rebuild")
+    assert first.status_code == 202
+
+    second = await authed_client.post(f"/api/v1/topics/{topic.id}/knowledge-graph/rebuild")
+
+    assert second.status_code == 429
+    assert second.json()["details"]["retryAfterSeconds"] > 0
+
+
+async def test_rebuild_graph_after_cooldown_elapses_succeeds(
+    authed_client: AsyncClient, db_session: AsyncSession, test_user: User, mock_ai_generate
+):
+    mock_ai_generate(MOCK_GRAPH_RESPONSE)
+    topic = await _create_topic_with_note(db_session, test_user)
+    await authed_client.post(f"/api/v1/topics/{topic.id}/knowledge-graph/rebuild")
+    await db_session.execute(
+        text(
+            "UPDATE topic_build_status SET updated_at = :stale "
+            "WHERE topic_id = :topic_id AND build_type = 'knowledge_graph'"
+        ),
+        {"stale": datetime.now(timezone.utc) - timedelta(minutes=5), "topic_id": topic.id},
+    )
+    await db_session.commit()
+
+    response = await authed_client.post(f"/api/v1/topics/{topic.id}/knowledge-graph/rebuild")
+
+    assert response.status_code == 202
+    assert response.json()["status"] == "completed"
+
+
+async def test_rebuild_graph_after_a_failed_attempt_is_not_cooldown_gated(
+    authed_client: AsyncClient, db_session: AsyncSession, test_user: User, mock_ai_generate
+):
+    empty_topic = Topic(user_id=test_user.id, title="Empty Topic", description=None)
+    db_session.add(empty_topic)
+    await db_session.flush()
+    failed = await authed_client.post(f"/api/v1/topics/{empty_topic.id}/knowledge-graph/rebuild")
+    assert failed.status_code == 422
+
+    mock_ai_generate(MOCK_GRAPH_RESPONSE)
+    note = Note(topic_id=empty_topic.id, title="Photosynthesis", content="Plants convert light using chlorophyll.")
+    db_session.add(note)
+    await db_session.flush()
+
+    retry = await authed_client.post(f"/api/v1/topics/{empty_topic.id}/knowledge-graph/rebuild")
+
+    assert retry.status_code == 202
+    assert retry.json()["status"] == "completed"
 
 
 async def test_get_concept_not_owned_returns_404(

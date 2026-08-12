@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { FormEvent, useCallback, useEffect, useState } from "react";
+import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import {
   ArrowLeft,
   ArrowUp,
@@ -18,6 +18,7 @@ import {
   Sparkles,
   StickyNote,
   Trash2,
+  Upload,
   X,
 } from "lucide-react";
 import {
@@ -30,7 +31,7 @@ import {
   useAuthFailure,
 } from "./shared/PageChrome";
 import { DashboardFlashcardStats, formatRelativeDue } from "./shared/dashboardShared";
-import { api, downloadFile, idempotencyHeader, Note, Pagination, Topic, messageFromError } from "../lib/api";
+import { api, downloadFile, idempotencyHeader, uploadWithProgress, Note, Pagination, Topic, messageFromError } from "../lib/api";
 import { Badge, Button, Card, EmptyState, LoadingState } from "./ui";
 
 export type FlashcardRating = "easy" | "medium" | "hard" | "forgot";
@@ -57,6 +58,13 @@ export type Flashcard = {
   updated_at: string;
   sourceType: "note" | "document" | null;
   sourceTitle: string | null;
+  scheduling?: {
+    stage: "new" | "learning" | "review";
+    intervalDays: number;
+    easeFactor: number;
+    dueAt: string;
+    reason: string;
+  };
 };
 
 type DeckStats = {
@@ -67,6 +75,8 @@ type DeckStats = {
   retention_rate: number | null;
   next_review_at: string | null;
 };
+
+type DeckHealth = { new: number; young: number; mature: number; archived: number; leeches: number };
 
 const RATING_OPTIONS: { value: FlashcardRating; label: string; className: string }[] = [
   { value: "forgot", label: "I forgot", className: "rating-forgot" },
@@ -192,6 +202,7 @@ export function FlashcardsDeckPage() {
   const [topic, setTopic] = useState<Topic | null>(null);
   const [cards, setCards] = useState<Flashcard[]>([]);
   const [stats, setStats] = useState<DeckStats | null>(null);
+  const [deckHealth, setDeckHealth] = useState<DeckHealth | null>(null);
   const [notes, setNotes] = useState<Note[]>([]);
   const [documents, setDocuments] = useState<StudyDocument[]>([]);
   const [statusFilter, setStatusFilter] = useState<FlashcardStatus>("active");
@@ -206,6 +217,10 @@ export function FlashcardsDeckPage() {
   const [savingAction, setSavingAction] = useState(false);
   const [actionError, setActionError] = useState("");
   const [busyCardId, setBusyCardId] = useState<number | null>(null);
+  const [importing, setImporting] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<number[]>([]);
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const importInputRef = useRef<HTMLInputElement | null>(null);
 
   const load = useCallback(async () => {
     if (!Number.isInteger(topicId) || topicId < 1) {
@@ -215,18 +230,21 @@ export function FlashcardsDeckPage() {
     setLoading(true);
     setError("");
     try {
-      const [topicResult, cardsResult, statsResult, notesResult, documentsResult] = await Promise.all([
+      const [topicResult, cardsResult, statsResult, healthResult, notesResult, documentsResult] = await Promise.all([
         api<{ topic: Topic }>(`/topics/${topicId}`),
         api<{ flashcards: Flashcard[] }>(`/topics/${topicId}/flashcards?status=${statusFilter}`),
         api<DeckStats>(`/topics/${topicId}/flashcards/stats`),
+        api<DeckHealth>(`/topics/${topicId}/flashcards/deck-health`),
         api<{ notes: Note[]; pagination: Pagination }>(`/topics/${topicId}/notes/paginated?page=1&limit=100`),
         api<{ documents: StudyDocument[] }>(`/topics/${topicId}/documents`),
       ]);
       setTopic(topicResult.topic);
       setCards(cardsResult.flashcards);
       setStats(statsResult);
+      setDeckHealth(healthResult);
       setNotes(notesResult.notes);
       setDocuments(documentsResult.documents);
+      setSelectedIds([]);
     } catch (requestError) {
       handleAuthFailure(requestError);
       setError(messageFromError(requestError));
@@ -385,12 +403,57 @@ export function FlashcardsDeckPage() {
     }
   }
 
+  async function importCsv(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    const formData = new FormData();
+    formData.append("file", file);
+    setImporting(true);
+    setError("");
+    try {
+      await uploadWithProgress(`/topics/${topicId}/flashcards/import`, formData);
+      await load();
+    } catch (requestError) {
+      setError(messageFromError(requestError));
+    } finally {
+      setImporting(false);
+    }
+  }
+
+  function toggleSelected(cardId: number) {
+    setSelectedIds((current) =>
+      current.includes(cardId) ? current.filter((id) => id !== cardId) : [...current, cardId],
+    );
+  }
+
+  async function runBulkAction(action: "archive" | "unarchive" | "delete") {
+    if (!selectedIds.length) return;
+    setBulkBusy(true);
+    setError("");
+    try {
+      await api<{ updated: number }>(`/topics/${topicId}/flashcards/bulk`, {
+        method: "POST",
+        body: JSON.stringify({ action, flashcardIds: selectedIds }),
+      });
+      await load();
+    } catch (requestError) {
+      setError(messageFromError(requestError));
+    } finally {
+      setBulkBusy(false);
+    }
+  }
+
   return (
     <PageShell
       className="flashcard-deck-page"
       title={topic?.title ?? "Flashcards"}
       subtitle="Manage this deck's cards, or start a review session."
       action={<div className="page-actions">
+        <input ref={importInputRef} type="file" accept=".csv" className="sr-only" onChange={(event) => void importCsv(event)} />
+        <button className="button button-secondary" disabled={importing} onClick={() => importInputRef.current?.click()}>
+          <Upload size={14} /> {importing ? "Importing…" : "Import CSV"}
+        </button>
         <button className="button button-secondary" onClick={() => void exportFlashcards()}><Download size={14} /> Export CSV</button>
         <Link className="button button-primary" href={`/flashcards/review?topicId=${topicId}`}><Play size={13} fill="currentColor" /> Start review</Link>
         <Link className="back-topics" href="/flashcards"><ArrowLeft size={13} /> All decks</Link>
@@ -417,6 +480,26 @@ export function FlashcardsDeckPage() {
           </article>
         </div>
       )}
+      {deckHealth && (
+        <div className="flashcard-summary-row">
+          <article className="flashcard-summary-stat">
+            <span className="stat-icon violet">N</span>
+            <div><small>NEW</small><strong>{deckHealth.new}</strong></div>
+          </article>
+          <article className="flashcard-summary-stat">
+            <span className="stat-icon coral">Y</span>
+            <div><small>LEARNING</small><strong>{deckHealth.young}</strong></div>
+          </article>
+          <article className="flashcard-summary-stat">
+            <span className="stat-icon mint">M</span>
+            <div><small>MATURE</small><strong>{deckHealth.mature}</strong></div>
+          </article>
+          <article className="flashcard-summary-stat">
+            <span className="stat-icon coral">!</span>
+            <div><small>LEECHES</small><strong>{deckHealth.leeches}</strong></div>
+          </article>
+        </div>
+      )}
       <section className="notes-panel flashcards-panel">
         <div className="section-head">
           <div className="filter-pills">
@@ -428,11 +511,29 @@ export function FlashcardsDeckPage() {
             <button className="add-note-button generate-cards-action" onClick={() => setShowGenerate(true)}><Sparkles size={14} /> Generate with AI</button>
           </div>
         </div>
+        {!!selectedIds.length && (
+          <div className="flashcard-bulk-bar">
+            <span>{selectedIds.length} selected</span>
+            <div className="page-actions">
+              {statusFilter === "active" ? (
+                <button className="button button-secondary" disabled={bulkBusy} onClick={() => void runBulkAction("archive")}>Archive</button>
+              ) : (
+                <button className="button button-secondary" disabled={bulkBusy} onClick={() => void runBulkAction("unarchive")}>Restore</button>
+              )}
+              <button className="button button-danger" disabled={bulkBusy} onClick={() => void runBulkAction("delete")}>Delete</button>
+              <button className="button button-secondary" disabled={bulkBusy} onClick={() => setSelectedIds([])}>Clear</button>
+            </div>
+          </div>
+        )}
         {loading ? <div className="empty">Loading cards…</div> : (
           <div className="notes-list flashcard-list">
             {cards.map((card) => (
               <article key={card.id}>
                 <div>
+                  <input
+                    type="checkbox" className="flashcard-select-checkbox" aria-label={`Select ${card.question}`}
+                    checked={selectedIds.includes(card.id)} onChange={() => toggleSelected(card.id)}
+                  />
                   <span>{card.origin === "ai" ? <Sparkles size={16} strokeWidth={1.8} /> : <StickyNote size={16} strokeWidth={1.8} />}</span>
                   <div>
                     <h3>{card.question}</h3>
@@ -718,6 +819,11 @@ export function FlashcardsReviewPage() {
                 <span className="eyebrow">ANSWER</span>
                 <p>{currentCard.answer}</p>
                 {currentCard.explanation && <p className="review-card-explanation">{currentCard.explanation}</p>}
+                {currentCard.scheduling && (
+                  <p className="review-card-scheduling" title={currentCard.scheduling.reason}>
+                    Why due now: {currentCard.scheduling.reason}
+                  </p>
+                )}
                 {sourceLabel(currentCard) && (
                   <Link className="source-chip document" href={`/topic?id=${topicId}`}>
                     {currentCard.sourceType === "note" ? <StickyNote size={12} /> : <FileText size={12} />} {sourceLabel(currentCard)}

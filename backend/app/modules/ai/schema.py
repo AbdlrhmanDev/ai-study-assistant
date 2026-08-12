@@ -3,9 +3,17 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from ..growth.schema import AnswerFeedbackReason
+
 
 class StrictModel(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+
+class MessageFeedbackIn(StrictModel):
+    rating: Literal[-1, 1]
+    reason: AnswerFeedbackReason | None = None
+    comment: str | None = Field(None, max_length=1000)
 
 
 class ChatIn(StrictModel):
@@ -23,12 +31,21 @@ class ChatIn(StrictModel):
 
 
 class SourceOut(BaseModel):
-    sourceType: Literal["note", "document"]
+    sourceType: Literal["note", "document", "workspace_page"]
     sourceId: int
     sourceTitle: str
     excerpt: str
     score: float
     similarity: float | None = None
+
+
+class SourceClickIn(StrictModel):
+    """Which cited source a user actually clicked on, so retrieval quality can
+    be measured beyond generation (was the cited chunk useful?)."""
+
+    sourceType: Literal["note", "document", "workspace_page"]
+    sourceId: int = Field(..., gt=0)
+    score: float | None = None
 
 
 class DocumentOut(BaseModel):

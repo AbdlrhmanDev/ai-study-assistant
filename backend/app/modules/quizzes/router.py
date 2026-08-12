@@ -1,11 +1,12 @@
 from fastapi import APIRouter, Header, status
 
 from ...api.dependencies import CurrentUser, DbSession
-from ...core.idempotency import with_idempotency
+from ...core.idempotency import cache_artifact, get_cached_artifact, stable_artifact_key, with_idempotency
 from ...shared.responses import no_content
+from ..topics import service as topics_service
 from . import service
 from .model import Quiz, QuizQuestion
-from .schema import AnswerSubmit, AttemptStart, QuizGenerate, QuizOut
+from .schema import AnswerSubmit, AttemptStart, QuestionEdit, QuizGenerate, QuizOut
 
 router = APIRouter(tags=["quizzes"])
 
@@ -25,6 +26,24 @@ def _serialize_question_for_taking(entry: tuple[QuizQuestion, str | None, str | 
         "options": question.options,
         "difficultyScore": question.difficulty_score,
     }
+
+
+def _serialize_question_for_editing(entry: tuple[QuizQuestion, str | None, str | None]) -> dict:
+    """Draft-only view -- includes the answer key so the owner can review
+    and fix it before publishing."""
+    question, source_type, source_title = entry
+    return {
+        **_serialize_question_for_taking(entry),
+        "correctAnswer": question.correct_answer,
+        "explanation": question.explanation,
+        "sourceType": source_type,
+        "sourceTitle": source_title,
+    }
+
+
+def _serialize_questions(entries: list[tuple[QuizQuestion, str | None, str | None]], status: str) -> list[dict]:
+    serializer = _serialize_question_for_editing if status == "draft" else _serialize_question_for_taking
+    return [serializer(entry) for entry in entries]
 
 
 @router.get("/quizzes/counts-by-topic")
@@ -54,11 +73,15 @@ async def generate_quiz(
     idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
 ):
     async def _compute() -> dict:
+        signature = await topics_service.material_signature(db, topic_id, user["id"])
+        cache_key = stable_artifact_key("quiz", topic_id, signature, payload.model_dump())
+        cached = await get_cached_artifact(user["id"], "quiz", cache_key)
+        if cached is not None:
+            return cached
         quiz, questions = await service.generate_quiz(db, topic_id, user["id"], payload)
-        return {
-            "quiz": _serialize_quiz(quiz),
-            "questions": [_serialize_question_for_taking(entry) for entry in questions],
-        }
+        response = {"quiz": _serialize_quiz(quiz), "questions": _serialize_questions(questions, quiz.status)}
+        await cache_artifact(user["id"], "quiz", cache_key, response)
+        return response
 
     return await with_idempotency(user["id"], "quiz_generate", idempotency_key, _compute)
 
@@ -66,16 +89,48 @@ async def generate_quiz(
 @router.get("/quizzes/{quiz_id}")
 async def get_quiz(quiz_id: int, db: DbSession, user: CurrentUser):
     quiz, questions = await service.get_quiz_for_taking(db, quiz_id, user["id"])
-    return {
-        "quiz": _serialize_quiz(quiz),
-        "questions": [_serialize_question_for_taking(entry) for entry in questions],
-    }
+    return {"quiz": _serialize_quiz(quiz), "questions": _serialize_questions(questions, quiz.status)}
 
 
 @router.delete("/quizzes/{quiz_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_quiz(quiz_id: int, db: DbSession, user: CurrentUser):
     await service.delete_quiz(db, quiz_id, user["id"])
     return no_content()
+
+
+@router.post("/quizzes/{quiz_id}/publish")
+async def publish_quiz(quiz_id: int, db: DbSession, user: CurrentUser):
+    quiz = await service.publish_quiz(db, quiz_id, user["id"])
+    return {"quiz": _serialize_quiz(quiz)}
+
+
+@router.patch("/quizzes/{quiz_id}/questions/{question_id}")
+async def edit_question(quiz_id: int, question_id: int, payload: QuestionEdit, db: DbSession, user: CurrentUser):
+    await service.edit_question(db, quiz_id, question_id, user["id"], payload)
+    entry = await service.get_question_with_source(db, quiz_id, question_id, user["id"])
+    return _serialize_question_for_editing(entry)
+
+
+@router.delete("/quizzes/{quiz_id}/questions/{question_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_question(quiz_id: int, question_id: int, db: DbSession, user: CurrentUser):
+    await service.delete_question(db, quiz_id, question_id, user["id"])
+    return no_content()
+
+
+@router.post("/quizzes/{quiz_id}/questions/{question_id}/regenerate")
+async def regenerate_question(quiz_id: int, question_id: int, db: DbSession, user: CurrentUser):
+    entry = await service.regenerate_question(db, quiz_id, question_id, user["id"])
+    return _serialize_question_for_editing(entry)
+
+
+@router.get("/quizzes/{quiz_id}/analytics")
+async def get_quiz_analytics(quiz_id: int, db: DbSession, user: CurrentUser):
+    return await service.get_quiz_analytics(db, quiz_id, user["id"])
+
+
+@router.get("/topics/{topic_id}/quiz-analytics")
+async def get_topic_quiz_analytics(topic_id: int, db: DbSession, user: CurrentUser):
+    return await service.get_topic_quiz_calibration(db, topic_id, user["id"])
 
 
 @router.get("/quizzes/{quiz_id}/attempts")

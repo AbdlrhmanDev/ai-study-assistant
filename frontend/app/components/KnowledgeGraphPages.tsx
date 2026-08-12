@@ -15,6 +15,12 @@ type GraphData = { nodes: GraphNode[]; edges: GraphEdge[]; belowMinimum: boolean
 const BUILD_POLL_INTERVAL_MS = 1500;
 const BUILD_POLL_MAX_ATTEMPTS = 30;
 type ConceptDetail = { id: number; topicId: number; name: string; description: string; masteryScore: number };
+type MasteryEvent = { sourceType: string; sourceId: number | null; quality: number; delta: number; createdAt: string };
+type ConceptHistory = { conceptId: number; conceptName: string; masteryScore?: number; events: MasteryEvent[] };
+
+const SOURCE_TYPE_LABELS: Record<string, string> = {
+  quiz: "Quiz answer", exam: "Exam answer", flashcard: "Flashcard review", sparring: "Sparring session",
+};
 
 type LayoutPoint = { x: number; y: number; vx: number; vy: number };
 
@@ -125,6 +131,8 @@ export function KnowledgeGraphPage() {
   const [error, setError] = useState("");
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
   const [conceptDetail, setConceptDetail] = useState<ConceptDetail | null>(null);
+  const [conceptHistory, setConceptHistory] = useState<ConceptHistory | null>(null);
+  const [showHistory, setShowHistory] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [buildAnnouncement, setBuildAnnouncement] = useState("");
 
@@ -242,6 +250,8 @@ export function KnowledgeGraphPage() {
   async function openConcept(node: GraphNode) {
     setSelectedNode(node);
     setConceptDetail(null);
+    setConceptHistory(null);
+    setShowHistory(false);
     if (window.matchMedia("(max-width: 47.99rem)").matches) {
       window.requestAnimationFrame(() => {
         detailPanelRef.current?.scrollIntoView({
@@ -255,6 +265,20 @@ export function KnowledgeGraphPage() {
       setConceptDetail(result);
     } catch {
       // side panel still shows the node's basic info even if the detail call fails
+    }
+  }
+
+  async function toggleHistory() {
+    if (!selectedNode) return;
+    const next = !showHistory;
+    setShowHistory(next);
+    if (next && !conceptHistory) {
+      try {
+        const result = await api<ConceptHistory>(`/topics/${topicId}/mastery/${selectedNode.id}/history`);
+        setConceptHistory(result);
+      } catch {
+        // the mastery-score bar above still stands on its own without this
+      }
     }
   }
 
@@ -512,6 +536,28 @@ export function KnowledgeGraphPage() {
                       </div>
                       <span>{Math.round((conceptDetail?.masteryScore ?? selectedNode.masteryScore) * 100)}%</span>
                     </div>
+                    <button type="button" className="graph-why-toggle" onClick={() => void toggleHistory()}>
+                      {showHistory ? "Hide why this score" : "Why this score?"}
+                    </button>
+                    {showHistory && (
+                      <div className="graph-history">
+                        {!conceptHistory ? (
+                          <div className="empty">Loading…</div>
+                        ) : conceptHistory.events.length ? (
+                          conceptHistory.events.map((event, index) => (
+                            <div className="graph-history-row" key={`${event.sourceType}-${event.sourceId}-${index}`}>
+                              <span>{SOURCE_TYPE_LABELS[event.sourceType] ?? event.sourceType}</span>
+                              <span className={event.delta >= 0 ? "graph-history-up" : "graph-history-down"}>
+                                {event.delta >= 0 ? "+" : ""}{Math.round(event.delta * 100)}%
+                              </span>
+                              <span>{new Date(event.createdAt).toLocaleDateString()}</span>
+                            </div>
+                          ))
+                        ) : (
+                          <div className="empty">No graded answers for this concept yet.</div>
+                        )}
+                      </div>
+                    )}
                     {!!edgesForSelected.length && (
                       <div className="graph-relations">
                         <div className="section-kicker">CONNECTIONS</div>

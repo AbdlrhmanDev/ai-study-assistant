@@ -1,5 +1,8 @@
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..ai.model import Document
+from ..notes.model import Note
 from ..study_history import repository as study_history_repository
 from . import repository
 from .exceptions import TopicNotFoundError
@@ -29,6 +32,9 @@ async def create_topic(db: AsyncSession, user_id: int, payload: TopicCreate) -> 
         activity_type="topic_created",
         description=f"Created topic: {topic.title}",
     )
+    from ..growth.service import add_event
+    add_event(db, user_id, "first_topic", {"topicId": topic.id})
+    add_event(db, user_id, "activation", {"source": "topic_created"})
     await db.commit()
     await db.refresh(topic)
     return topic
@@ -64,4 +70,29 @@ async def update_topic(
 async def delete_topic(db: AsyncSession, topic_id: int, user_id: int) -> None:
     topic = await get_owned_topic_or_404(db, topic_id, user_id)
     await repository.delete(db, topic)
+    await study_history_repository.record_activity_safely(
+        db, user_id=user_id, topic_id=topic_id, activity_type="topic_deleted",
+        description=f"Deleted topic {topic.title}",
+    )
     await db.commit()
+
+
+async def material_signature(db: AsyncSession, topic_id: int, user_id: int) -> str:
+    """A cheap content fingerprint of everything AI artifact generation
+    reads for a topic (notes + completed documents). Artifact caches key on
+    this so a note/document edit or upload invalidates previously generated
+    quizzes/exams/flashcards instead of serving stale AI output."""
+    notes_count, notes_updated = (
+        await db.execute(
+            select(func.count(Note.id), func.max(Note.updated_at)).where(Note.topic_id == topic_id, Note.user_id == user_id)
+        )
+    ).first() or (0, None)
+    documents_count, documents_updated = (
+        await db.execute(
+            select(func.count(Document.id), func.max(Document.updated_at)).where(Document.topic_id == topic_id)
+        )
+    ).first() or (0, None)
+    return (
+        f"n{notes_count}:{notes_updated.isoformat() if notes_updated else '-'}"
+        f"|d{documents_count}:{documents_updated.isoformat() if documents_updated else '-'}"
+    )

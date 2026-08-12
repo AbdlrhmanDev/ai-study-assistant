@@ -1,14 +1,16 @@
-from fastapi import APIRouter, Header, Query, status
+from fastapi import APIRouter, File, Header, Query, UploadFile, status
 
 from ...api.dependencies import CurrentUser, DbSession
-from ...core.idempotency import with_idempotency
+from ...core.idempotency import cache_artifact, get_cached_artifact, stable_artifact_key, with_idempotency
 from ...shared.responses import no_content
+from ..topics import service as topics_service
 from . import service
 from .model import Flashcard
 from .schema import (
     DashboardStatsOut,
     DeckStatsOut,
     FlashcardArchiveIn,
+    FlashcardBulkIn,
     FlashcardCreate,
     FlashcardGenerate,
     FlashcardOut,
@@ -19,11 +21,42 @@ from .schema import (
 router = APIRouter(tags=["flashcards"])
 
 
+def _scheduling_explanation(flashcard: Flashcard) -> dict:
+    """Human-readable "why is this card due now" summary built from the SM-2
+    state already persisted on the card."""
+    if flashcard.repetitions == 0:
+        stage = "new"
+        reason = "New card — it has never been reviewed, so it is due immediately."
+    elif flashcard.interval_days == 0:
+        stage = "learning"
+        reason = "In the learning phase — reviewed again today until the first successful rating starts the interval cycle."
+    else:
+        stage = "review"
+        rating_note = (
+            f"Your last rating was {flashcard.last_rating}" if flashcard.last_rating else "It was rated"
+        )
+        reviewed_note = (
+            f" on {flashcard.last_reviewed_at.isoformat()}" if flashcard.last_reviewed_at else ""
+        )
+        reason = (
+            f"{rating_note}{reviewed_note}; the interval grew to {flashcard.interval_days} day(s) "
+            f"(ease factor {flashcard.ease_factor:.2f}), so it is due today."
+        )
+    return {
+        "stage": stage,
+        "intervalDays": flashcard.interval_days,
+        "easeFactor": round(flashcard.ease_factor, 2),
+        "dueAt": flashcard.due_at.isoformat(),
+        "reason": reason,
+    }
+
+
 def _serialize(entry: tuple[Flashcard, str | None, str | None]) -> dict:
     flashcard, source_type, source_title = entry
     data = FlashcardOut.model_validate(flashcard).model_dump(mode="json")
     data["sourceType"] = source_type
     data["sourceTitle"] = source_title
+    data["scheduling"] = _scheduling_explanation(flashcard)
     return data
 
 
@@ -50,8 +83,15 @@ async def generate_flashcards(
     idempotency_key: str | None = Header(None, alias="Idempotency-Key"),
 ):
     async def _compute() -> dict:
+        signature = await topics_service.material_signature(db, topic_id, user["id"])
+        cache_key = stable_artifact_key("flashcards", topic_id, signature, payload.model_dump())
+        cached = await get_cached_artifact(user["id"], "flashcards", cache_key)
+        if cached is not None:
+            return cached
         entries = await service.generate_flashcards(db, topic_id, user["id"], payload)
-        return {"flashcards": [_serialize(entry) for entry in entries]}
+        response = {"flashcards": [_serialize(entry) for entry in entries]}
+        await cache_artifact(user["id"], "flashcards", cache_key, response)
+        return response
 
     return await with_idempotency(user["id"], "flashcards_generate", idempotency_key, _compute)
 
@@ -68,6 +108,23 @@ async def get_topic_due_queue(
 async def get_deck_stats(topic_id: int, db: DbSession, user: CurrentUser):
     stats = await service.get_deck_stats(db, topic_id, user["id"])
     return DeckStatsOut(**stats).model_dump(mode="json")
+
+
+@router.get("/topics/{topic_id}/flashcards/deck-health")
+async def get_deck_health(topic_id: int, db: DbSession, user: CurrentUser):
+    return await service.get_deck_health(db, topic_id, user["id"])
+
+
+@router.post("/topics/{topic_id}/flashcards/import", status_code=status.HTTP_201_CREATED)
+async def import_flashcards(topic_id: int, db: DbSession, user: CurrentUser, file: UploadFile = File(...)):
+    raw_bytes = await file.read()
+    return await service.import_flashcards(db, topic_id, user["id"], raw_bytes)
+
+
+@router.post("/topics/{topic_id}/flashcards/bulk")
+async def bulk_update_flashcards(topic_id: int, payload: FlashcardBulkIn, db: DbSession, user: CurrentUser):
+    updated = await service.bulk_update_flashcards(db, topic_id, user["id"], payload.flashcardIds, payload.action)
+    return {"updated": updated}
 
 
 @router.get("/flashcards/due")

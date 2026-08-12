@@ -41,6 +41,29 @@ DEFAULT_AI_FEATURE_LIMITS: dict[str, dict[str, int]] = {
     "coach": {"daily": 10, "monthly": 100},
 }
 
+# Account plan tiers. Billing is deliberately not wired up yet (Phase 4);
+# these tiers exist so quota/storage enforcement can vary per account from a
+# single config source. A user's plan is a `users.plan` column (default
+# "beta"); an operator sets it directly in the DB today. `feature_multiplier`
+# scales the per-feature daily/monthly AI caps above; storage_mb and
+# monthly_request_limit override the flat globals for that plan.
+DEFAULT_PLAN_TIERS: dict[str, dict] = {
+    "beta": {
+        "label": "Beta",
+        "monthly_price_usd": 0,
+        "storage_mb": 500,
+        "monthly_request_limit": 500,
+        "feature_multiplier": 1,
+    },
+    "pro": {
+        "label": "Pro",
+        "monthly_price_usd": 12,
+        "storage_mb": 5000,
+        "monthly_request_limit": 5000,
+        "feature_multiplier": 5,
+    },
+}
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -93,6 +116,16 @@ class Settings(BaseSettings):
     # Document upload
     upload_dir: str = Field("./uploads", alias="UPLOAD_DIR")
     max_upload_mb: int = Field(20, alias="MAX_UPLOAD_MB", ge=1)
+    # Total storage across all of a user's documents, not per-file. There's
+    # no billing/plan tiers yet (Phase 2), so this is one flat beta-wide cap
+    # rather than a per-plan quota -- differentiating by plan can layer on
+    # top of this same accounting once plans exist.
+    max_storage_mb_per_user: int = Field(500, alias="MAX_STORAGE_MB_PER_USER", ge=1)
+    # Account plan tiers. `default_plan` applies to accounts that were never
+    # assigned one; `PLAN_TIERS` (JSON) can override the built-in tiers per
+    # deployment. Storage and AI quotas are resolved per account plan.
+    default_plan: str = Field("beta", alias="DEFAULT_PLAN")
+    plan_tiers_raw: str = Field("", alias="PLAN_TIERS")
     storage_backend: str = Field("local", alias="STORAGE_BACKEND")
     s3_bucket: str = Field("", alias="S3_BUCKET")
     s3_region: str = Field("auto", alias="S3_REGION")
@@ -115,10 +148,23 @@ class Settings(BaseSettings):
     slow_query_ms: int = Field(500, alias="SLOW_QUERY_MS", ge=1)
     ai_monthly_request_limit: int = Field(500, alias="AI_MONTHLY_REQUEST_LIMIT", ge=1)
     ai_feature_limits_raw: str = Field("", alias="AI_FEATURE_LIMITS")
+    # JSON map, for example {"chat":"openai","quiz":"groq"}. Missing
+    # features keep AI_PROVIDER, and unavailable providers fall back safely.
+    ai_feature_providers_raw: str = Field("", alias="AI_FEATURE_PROVIDERS")
+    ai_artifact_cache_ttl_seconds: int = Field(
+        86400, alias="AI_ARTIFACT_CACHE_TTL_SECONDS", ge=60, le=2592000
+    )
     soft_limit_warning_threshold: float = Field(
         0.8, alias="SOFT_LIMIT_WARNING_THRESHOLD", ge=0.0, le=1.0
     )
     admin_emails: str = Field("", alias="ADMIN_EMAILS")
+    smtp_host: str = Field("", alias="SMTP_HOST")
+    smtp_port: int = Field(587, alias="SMTP_PORT", ge=1, le=65535)
+    smtp_username: str = Field("", alias="SMTP_USERNAME")
+    smtp_password: str = Field("", alias="SMTP_PASSWORD")
+    smtp_from_email: str = Field("", alias="SMTP_FROM_EMAIL")
+    smtp_use_tls: bool = Field(True, alias="SMTP_USE_TLS")
+    app_public_url: str = Field("http://localhost:3000", alias="APP_PUBLIC_URL")
 
     @field_validator("ai_provider")
     @classmethod
@@ -237,8 +283,45 @@ class Settings(BaseSettings):
         return merged
 
     @property
+    def feature_providers(self) -> dict[str, str]:
+        if not self.ai_feature_providers_raw:
+            return {}
+        try:
+            parsed = json.loads(self.ai_feature_providers_raw)
+        except (json.JSONDecodeError, TypeError):
+            return {}
+        if not isinstance(parsed, dict):
+            return {}
+        return {
+            str(feature): str(provider)
+            for feature, provider in parsed.items()
+            if provider in {"gemini", "groq", "openai"}
+        }
+
+    @property
+    def plan_tiers(self) -> dict[str, dict]:
+        """Plan definitions keyed by plan slug. JSON env overrides (PLAN_TIERS)
+        merge onto the built-in tiers -- specify only the fields you want to
+        change; unknown keys are ignored."""
+        merged = {slug: dict(tier) for slug, tier in DEFAULT_PLAN_TIERS.items()}
+        if self.plan_tiers_raw:
+            try:
+                overrides = json.loads(self.plan_tiers_raw)
+            except (json.JSONDecodeError, TypeError):
+                overrides = {}
+            if isinstance(overrides, dict):
+                for slug, tier in overrides.items():
+                    if isinstance(tier, dict):
+                        merged.setdefault(str(slug), {}).update(tier)
+        return merged
+
+    @property
     def max_upload_bytes(self) -> int:
         return self.max_upload_mb * 1024 * 1024
+
+    @property
+    def max_storage_bytes_per_user(self) -> int:
+        return self.max_storage_mb_per_user * 1024 * 1024
 
     @property
     def embedding_model(self) -> str:

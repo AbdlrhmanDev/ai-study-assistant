@@ -1,8 +1,12 @@
+import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.modules.ai import repository as ai_repository
+from app.modules.ai.indexing import _flatten_block_text
 from app.modules.topics.model import Topic
 from app.modules.users.model import User
+from app.modules.workspace import service as workspace_service
 from app.modules.workspace.model import WorkspacePage
 
 
@@ -357,3 +361,196 @@ async def test_update_page_with_current_expected_updated_at_succeeds(
 
     assert response.status_code == 200
     assert response.json()["page"]["title"] == "Up to date save"
+
+
+# --------------------------------------------------------------------------
+# Version history / recovery snapshots
+# --------------------------------------------------------------------------
+
+
+async def test_first_block_edit_snapshots_the_prior_state(
+    authed_client: AsyncClient, db_session: AsyncSession, test_user: User
+):
+    page = await _create_page(db_session, test_user, title="Original")
+
+    response = await authed_client.patch(
+        f"/api/v1/workspace-pages/{page.id}",
+        json={"blocks": [{"id": "b1", "type": "text", "content": "New content"}]},
+    )
+    assert response.status_code == 200
+
+    versions_response = await authed_client.get(f"/api/v1/workspace-pages/{page.id}/versions")
+    assert versions_response.status_code == 200
+    versions = versions_response.json()["versions"]
+    assert len(versions) == 1
+    assert versions[0]["title"] == "Original"
+
+
+async def test_rapid_edits_within_the_snapshot_window_do_not_pile_up_versions(
+    authed_client: AsyncClient, db_session: AsyncSession, test_user: User
+):
+    page = await _create_page(db_session, test_user)
+
+    await authed_client.patch(
+        f"/api/v1/workspace-pages/{page.id}", json={"blocks": [{"id": "b1", "type": "text", "content": "v1"}]}
+    )
+    await authed_client.patch(
+        f"/api/v1/workspace-pages/{page.id}", json={"blocks": [{"id": "b1", "type": "text", "content": "v2"}]}
+    )
+
+    versions_response = await authed_client.get(f"/api/v1/workspace-pages/{page.id}/versions")
+    assert len(versions_response.json()["versions"]) == 1
+
+
+async def test_restore_version_reverts_content_and_snapshots_current_state(
+    authed_client: AsyncClient, db_session: AsyncSession, test_user: User
+):
+    page = await _create_page(db_session, test_user, title="Original")
+    await authed_client.patch(
+        f"/api/v1/workspace-pages/{page.id}",
+        json={"blocks": [{"id": "b1", "type": "text", "content": "Edited content"}]},
+    )
+    versions = (await authed_client.get(f"/api/v1/workspace-pages/{page.id}/versions")).json()["versions"]
+    version_id = versions[0]["id"]
+
+    response = await authed_client.post(f"/api/v1/workspace-pages/{page.id}/versions/{version_id}/restore")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["page"]["blocks"] == []
+
+    versions_after = (await authed_client.get(f"/api/v1/workspace-pages/{page.id}/versions")).json()["versions"]
+    assert len(versions_after) == 2
+
+
+async def test_get_version_returns_full_blocks(
+    authed_client: AsyncClient, db_session: AsyncSession, test_user: User
+):
+    page = await _create_page(db_session, test_user)
+    blocks = [{"id": "b1", "type": "text", "content": "Snapshot me"}]
+    await authed_client.patch(f"/api/v1/workspace-pages/{page.id}", json={"blocks": blocks})
+    await authed_client.patch(f"/api/v1/workspace-pages/{page.id}", json={"blocks": []})
+    version_id = (await authed_client.get(f"/api/v1/workspace-pages/{page.id}/versions")).json()["versions"][0]["id"]
+
+    response = await authed_client.get(f"/api/v1/workspace-pages/{page.id}/versions/{version_id}")
+
+    assert response.status_code == 200
+    assert response.json()["version"]["blocks"] == []
+
+
+async def test_restore_unknown_version_returns_404(
+    authed_client: AsyncClient, db_session: AsyncSession, test_user: User
+):
+    page = await _create_page(db_session, test_user)
+
+    response = await authed_client.post(f"/api/v1/workspace-pages/{page.id}/versions/999999/restore")
+
+    assert response.status_code == 404
+
+
+async def test_list_versions_for_unowned_page_returns_404(
+    authed_client: AsyncClient, db_session: AsyncSession, other_user: User
+):
+    page = await _create_page(db_session, other_user)
+
+    response = await authed_client.get(f"/api/v1/workspace-pages/{page.id}/versions")
+
+    assert response.status_code == 404
+
+
+# --------------------------------------------------------------------------
+# RAG indexing wiring -- topic-linked pages should feed retrieval; unlinked
+# pages should not. The actual chunk/embed pipeline runs in an independent
+# DB session (see ai/indexing.py), so these tests verify the two halves
+# separately: that the service layer *calls* the indexer at the right times,
+# and that the chunk-storage/retrieval plumbing itself works correctly.
+# --------------------------------------------------------------------------
+
+
+async def test_update_page_triggers_workspace_indexing(
+    authed_client: AsyncClient, db_session: AsyncSession, test_user: User, monkeypatch: pytest.MonkeyPatch
+):
+    calls = []
+
+    async def _fake_enqueue(workspace_page_id: int) -> str:
+        calls.append(workspace_page_id)
+        return "test"
+
+    monkeypatch.setattr(workspace_service.ai_indexing, "enqueue_workspace_page_index", _fake_enqueue)
+    page = await _create_page(db_session, test_user)
+
+    await authed_client.patch(
+        f"/api/v1/workspace-pages/{page.id}", json={"blocks": [{"id": "b1", "type": "text", "content": "hi"}]}
+    )
+
+    assert calls == [page.id]
+
+
+async def test_title_only_edit_does_not_trigger_indexing(
+    authed_client: AsyncClient, db_session: AsyncSession, test_user: User, monkeypatch: pytest.MonkeyPatch
+):
+    calls = []
+
+    async def _fake_enqueue(workspace_page_id: int) -> str:
+        calls.append(workspace_page_id)
+        return "test"
+
+    monkeypatch.setattr(workspace_service.ai_indexing, "enqueue_workspace_page_index", _fake_enqueue)
+    page = await _create_page(db_session, test_user)
+
+    await authed_client.patch(f"/api/v1/workspace-pages/{page.id}", json={"title": "Renamed"})
+
+    assert calls == []
+
+
+async def test_link_topic_triggers_workspace_indexing(
+    authed_client: AsyncClient, db_session: AsyncSession, test_user: User, monkeypatch: pytest.MonkeyPatch
+):
+    calls = []
+
+    async def _fake_enqueue(workspace_page_id: int) -> str:
+        calls.append(workspace_page_id)
+        return "test"
+
+    monkeypatch.setattr(workspace_service.ai_indexing, "enqueue_workspace_page_index", _fake_enqueue)
+    page = await _create_page(db_session, test_user)
+    topic = await _create_topic(db_session, test_user)
+
+    await authed_client.patch(f"/api/v1/workspace-pages/{page.id}/topic", json={"topic_id": topic.id})
+
+    assert calls == [page.id]
+
+
+async def test_workspace_page_chunks_are_retrievable_by_topic(
+    db_session: AsyncSession, test_user: User
+):
+    """Directly exercises the storage/retrieval plumbing (bypassing the
+    independent-session indexing pipeline, same pattern as
+    tests/test_ai_chat.py) -- confirms a workspace page's chunks show up as
+    a `workspace_page` source when retrieving by topic."""
+    topic = await _create_topic(db_session, test_user)
+    page = await _create_page(db_session, test_user, title="My Workspace Notes", topic_id=topic.id)
+
+    await ai_repository.replace_workspace_page_chunks(
+        db_session, workspace_page_id=page.id, topic_id=topic.id,
+        chunks=["Some workspace content about the topic."], embeddings=[None],
+    )
+
+    chunks = await ai_repository.list_topic_chunks(db_session, topic.id)
+
+    assert len(chunks) == 1
+    assert chunks[0].source_type == "workspace_page"
+    assert chunks[0].source_id == page.id
+    assert chunks[0].source_title == "My Workspace Notes"
+
+
+def test_flatten_block_text_joins_nested_children_depth_first():
+    blocks = [
+        {"id": "b1", "type": "heading_1", "content": "Title"},
+        {
+            "id": "b2", "type": "text", "content": "Parent",
+            "children": [{"id": "b3", "type": "text", "content": "Child"}],
+        },
+        {"id": "b4", "type": "divider", "content": ""},
+    ]
+
+    assert _flatten_block_text(blocks) == "Title\nParent\nChild"

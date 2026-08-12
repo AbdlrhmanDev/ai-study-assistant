@@ -52,8 +52,10 @@ test("dense learning pages remain navigable on mobile", async ({ page }, testInf
   ]) {
     await page.goto(path);
     await expect(page.getByRole("heading", { name: heading, exact: true })).toBeVisible();
-    const menu = page.getByRole("button", { name: "Open menu" });
-    await expect(menu).toBeVisible();
+    // Mobile navigation is the bottom "Quick navigation" tab bar + "More"
+    // sheet (see responsive-layout.spec.ts), not the desktop hamburger
+    // trigger -- that's hidden on mobile across the whole dashboard shell.
+    await expect(page.getByRole("navigation", { name: "Quick navigation" })).toBeVisible();
     await expect(page.locator('aside[aria-label="Primary navigation"]')).toBeAttached();
   }
 });

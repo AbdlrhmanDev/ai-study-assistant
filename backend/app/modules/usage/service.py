@@ -53,24 +53,25 @@ async def enforce_quota(feature: str | None = None, *, user_id: int | None = Non
     if resolved_user_id is None:
         return
     resolved_feature = feature or infer_feature()
-    settings = get_settings()
     now = datetime.now(timezone.utc)
 
     async with get_sessionmaker()() as db:
+        plan_limits_for_account = await _plan_limits(db, resolved_user_id)
+        feature_limits = plan_limits_for_account["featureLimits"]
         global_used = await db.scalar(
             select(func.count(UsageEvent.id)).where(
                 UsageEvent.user_id == resolved_user_id, UsageEvent.created_at >= _month_start(now),
                 UsageEvent.outcome == "success",
             )
         )
-        global_limit = settings.ai_monthly_request_limit
+        global_limit = plan_limits_for_account["monthlyRequestLimit"]
         if int(global_used or 0) >= global_limit:
             raise AppError(
                 "Your monthly AI beta limit has been reached. It resets next month.", 429,
                 {"code": "AI_QUOTA_EXCEEDED", "scope": "global", "limit": global_limit, "used": int(global_used or 0)},
             )
 
-        limits = settings.feature_limits.get(resolved_feature, {})
+        limits = feature_limits.get(resolved_feature, {})
         monthly_limit = limits.get("monthly")
         if monthly_limit is not None:
             feature_month_used = await db.scalar(
@@ -140,23 +141,31 @@ async def _counts_by_feature(db, user_id: int, since: datetime) -> dict[str, int
     return {feature: int(count) for feature, count in rows}
 
 
+async def _plan_limits(db, user_id: int) -> dict:
+    from ..plans.service import plan_limits_for_user
+
+    return await plan_limits_for_user(db, user_id)
+
+
 async def get_usage_summary(user_id: int) -> dict:
     """Global + per-feature used/limit/remaining/softLimitHit, for
     `GET /usage/me` and any frontend quota display. Two grouped queries
-    (month-to-date, day-to-date) instead of one per feature."""
-    settings = get_settings()
+    (month-to-date, day-to-date) instead of one per feature. Limits come
+    from the account's plan tier."""
     now = datetime.now(timezone.utc)
-    threshold = settings.soft_limit_warning_threshold
+    threshold = get_settings().soft_limit_warning_threshold
 
     async with get_sessionmaker()() as db:
         monthly_counts = await _counts_by_feature(db, user_id, _month_start(now))
         daily_counts = await _counts_by_feature(db, user_id, _day_start(now))
+        plan_limits_for_account = await _plan_limits(db, user_id)
 
     global_used_int = sum(monthly_counts.values())
-    global_limit = settings.ai_monthly_request_limit
+    global_limit = plan_limits_for_account["monthlyRequestLimit"]
+    feature_limits = plan_limits_for_account["featureLimits"]
 
     features: dict[str, dict] = {}
-    for feature, limits in settings.feature_limits.items():
+    for feature, limits in feature_limits.items():
         entry: dict = {}
         monthly_limit = limits.get("monthly")
         daily_limit = limits.get("daily")

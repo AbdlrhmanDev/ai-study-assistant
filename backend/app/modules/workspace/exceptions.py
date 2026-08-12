@@ -11,6 +11,11 @@ class WorkspaceBlockNotFoundError(AppError):
         super().__init__("Block not found", 404)
 
 
+class WorkspacePageVersionNotFoundError(AppError):
+    def __init__(self) -> None:
+        super().__init__("That version of this page could not be found", 404)
+
+
 class WorkspacePageConflictError(AppError):
     def __init__(self, current: dict) -> None:
         super().__init__(

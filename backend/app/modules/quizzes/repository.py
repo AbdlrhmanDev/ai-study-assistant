@@ -155,6 +155,132 @@ async def delete_quiz(db: AsyncSession, quiz: Quiz) -> None:
     await db.delete(quiz)
 
 
+async def set_quiz_status(db: AsyncSession, quiz: Quiz, *, status: str) -> Quiz:
+    quiz.status = status
+    await db.flush()
+    await db.refresh(quiz)
+    return quiz
+
+
+async def list_existing_prompts_for_topic(db: AsyncSession, topic_id: int, limit: int = 150) -> list[str]:
+    """A bounded sample of this topic's already-asked question prompts --
+    fed back into the generation prompt so the AI avoids repeating them."""
+    stmt = (
+        select(QuizQuestion.prompt)
+        .join(Quiz, Quiz.id == QuizQuestion.quiz_id)
+        .where(Quiz.topic_id == topic_id)
+        .order_by(QuizQuestion.created_at.desc())
+        .limit(limit)
+    )
+    result = await db.execute(stmt)
+    return [prompt for (prompt,) in result.all()]
+
+
+async def question_analytics(db: AsyncSession, quiz_id: int) -> list[dict]:
+    """Per-question stats across every attempt at this quiz -- how often
+    each item was answered and how often it was answered correctly."""
+    stmt = (
+        select(
+            QuizQuestion.id,
+            QuizQuestion.order_index,
+            QuizQuestion.prompt,
+            QuizQuestion.concept,
+            func.count(QuizAnswer.id).label("times_answered"),
+            func.sum(case((QuizAnswer.is_correct.is_(True), 1), else_=0)).label("correct_count"),
+        )
+        .outerjoin(QuizAnswer, QuizAnswer.question_id == QuizQuestion.id)
+        .where(QuizQuestion.quiz_id == quiz_id)
+        .group_by(QuizQuestion.id, QuizQuestion.order_index)
+        .order_by(QuizQuestion.order_index)
+    )
+    result = await db.execute(stmt)
+    return [
+        {
+            "questionId": row.id,
+            "prompt": row.prompt,
+            "concept": row.concept,
+            "timesAnswered": row.times_answered,
+            "correctCount": int(row.correct_count or 0),
+        }
+        for row in result
+    ]
+
+
+async def topic_question_stats(
+    db: AsyncSession, topic_id: int, user_id: int
+) -> list[dict]:
+    """Per-question accuracy across *this user's* attempts on every quiz in a
+    topic -- the raw material for difficulty calibration (does the stored
+    difficulty estimate match how often the question is actually answered
+    correctly?)."""
+    stmt = (
+        select(
+            QuizQuestion.id,
+            QuizQuestion.order_index,
+            QuizQuestion.prompt,
+            QuizQuestion.concept,
+            QuizQuestion.question_type,
+            QuizQuestion.difficulty_score,
+            func.count(QuizAnswer.id).label("times_answered"),
+            func.sum(case((QuizAnswer.is_correct.is_(True), 1), else_=0)).label("correct_count"),
+        )
+        .join(Quiz, Quiz.id == QuizQuestion.quiz_id)
+        .join(QuizAttempt, QuizAttempt.quiz_id == Quiz.id)
+        .join(
+            QuizAnswer,
+            (QuizAnswer.attempt_id == QuizAttempt.id) & (QuizAnswer.question_id == QuizQuestion.id),
+        )
+        .where(Quiz.topic_id == topic_id, QuizAttempt.user_id == user_id)
+        .group_by(QuizQuestion.id, QuizQuestion.order_index)
+        .order_by(QuizQuestion.order_index)
+    )
+    result = await db.execute(stmt)
+    return [
+        {
+            "questionId": row.id,
+            "prompt": row.prompt,
+            "concept": row.concept,
+            "questionType": row.question_type,
+            "assignedDifficulty": row.difficulty_score,
+            "timesAnswered": row.times_answered,
+            "correctCount": int(row.correct_count or 0),
+        }
+        for row in result
+    ]
+
+
+async def per_question_answer_times(
+    db: AsyncSession, topic_id: int, user_id: int
+) -> dict[int, list[float]]:
+    """Seconds spent per question, derived from the gap between consecutive
+    answers inside each of the user's attempts on quizzes in a topic (the
+    first answer of an attempt is measured from `started_at`)."""
+    attempts_rows = await db.execute(
+        select(QuizAttempt.id, QuizAttempt.started_at)
+        .join(Quiz, Quiz.id == QuizAttempt.quiz_id)
+        .where(Quiz.topic_id == topic_id, QuizAttempt.user_id == user_id)
+    )
+    starts = {attempt_id: started_at for attempt_id, started_at in attempts_rows.all()}
+
+    answers_rows = await db.execute(
+        select(QuizAnswer.attempt_id, QuizAnswer.question_id, QuizAnswer.answered_at)
+        .join(QuizAttempt, QuizAttempt.id == QuizAnswer.attempt_id)
+        .join(Quiz, Quiz.id == QuizAttempt.quiz_id)
+        .where(Quiz.topic_id == topic_id, QuizAttempt.user_id == user_id)
+        .order_by(QuizAnswer.attempt_id, QuizAnswer.answered_at)
+    )
+    rows = answers_rows.all()
+
+    times: dict[int, list[float]] = {}
+    previous_per_attempt: dict[int, datetime] = {}
+    for attempt_id, question_id, answered_at in rows:
+        previous = previous_per_attempt.get(attempt_id, starts.get(attempt_id))
+        if previous is not None:
+            times.setdefault(question_id, []).append(max((answered_at - previous).total_seconds(), 0))
+        previous_per_attempt[attempt_id] = answered_at
+    return times
+
+
 # --------------------------------------------------------------------------
 # Questions
 # --------------------------------------------------------------------------
@@ -184,6 +310,44 @@ async def get_question_for_quiz(
     if row is None:
         return None
     return row.QuizQuestion, row.source_type, row.source_title
+
+
+async def update_question(
+    db: AsyncSession,
+    question: QuizQuestion,
+    *,
+    prompt: str | None = None,
+    explanation: str | None = None,
+    concept: str | None = None,
+    options: dict | None = None,
+    correct_answer: dict | None = None,
+    update_answer_shape: bool = False,
+    difficulty_score: float | None = None,
+    source_note_id: int | None = None,
+    source_document_id: int | None = None,
+    update_source: bool = False,
+) -> QuizQuestion:
+    if prompt is not None:
+        question.prompt = prompt
+    if explanation is not None:
+        question.explanation = explanation
+    if concept is not None:
+        question.concept = concept
+    if update_answer_shape:
+        question.options = options
+        question.correct_answer = correct_answer
+    if difficulty_score is not None:
+        question.difficulty_score = difficulty_score
+    if update_source:
+        question.source_note_id = source_note_id
+        question.source_document_id = source_document_id
+    await db.flush()
+    await db.refresh(question)
+    return question
+
+
+async def delete_question(db: AsyncSession, question: QuizQuestion) -> None:
+    await db.delete(question)
 
 
 # --------------------------------------------------------------------------

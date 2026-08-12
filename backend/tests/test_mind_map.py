@@ -1,6 +1,8 @@
 import json
+from datetime import datetime, timedelta, timezone
 
 from httpx import AsyncClient
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.notes.model import Note
@@ -92,3 +94,37 @@ async def test_get_mind_map_after_rebuild_returns_saved_structure(
 
     assert response.status_code == 200
     assert response.json()["nodeCount"] == 4
+
+
+async def test_rebuild_mind_map_immediately_after_completion_is_cooldown_gated(
+    authed_client: AsyncClient, db_session: AsyncSession, test_user: User, mock_ai_generate
+):
+    mock_ai_generate(MOCK_MIND_MAP_RESPONSE)
+    topic = await _create_topic_with_note(db_session, test_user)
+    await authed_client.post(f"/api/v1/topics/{topic.id}/mind-map/rebuild")
+
+    second = await authed_client.post(f"/api/v1/topics/{topic.id}/mind-map/rebuild")
+
+    assert second.status_code == 429
+    assert second.json()["details"]["retryAfterSeconds"] > 0
+
+
+async def test_rebuild_mind_map_after_cooldown_elapses_succeeds(
+    authed_client: AsyncClient, db_session: AsyncSession, test_user: User, mock_ai_generate
+):
+    mock_ai_generate(MOCK_MIND_MAP_RESPONSE)
+    topic = await _create_topic_with_note(db_session, test_user)
+    await authed_client.post(f"/api/v1/topics/{topic.id}/mind-map/rebuild")
+    await db_session.execute(
+        text(
+            "UPDATE topic_build_status SET updated_at = :stale "
+            "WHERE topic_id = :topic_id AND build_type = 'mind_map'"
+        ),
+        {"stale": datetime.now(timezone.utc) - timedelta(minutes=5), "topic_id": topic.id},
+    )
+    await db_session.commit()
+
+    response = await authed_client.post(f"/api/v1/topics/{topic.id}/mind-map/rebuild")
+
+    assert response.status_code == 202
+    assert response.json()["status"] == "completed"

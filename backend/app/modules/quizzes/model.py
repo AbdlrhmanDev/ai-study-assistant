@@ -25,6 +25,7 @@ QUESTION_TYPES = (
 )
 DIFFICULTIES = ("easy", "medium", "hard", "mixed")
 QUIZ_SOURCES = ("topic", "note", "document", "concept", "weak_areas")
+QUIZ_STATUSES = ("draft", "published")
 
 
 class Quiz(Base):
@@ -51,6 +52,12 @@ class Quiz(Base):
     adaptive: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
     timed: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default="false")
     time_limit_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # "draft" quizzes were generated with `preview=True` and are visible only
+    # to their owner for review/editing -- attempts can't be started until
+    # they're published. Existing rows (and quizzes generated without
+    # `preview`) default straight to "published" to keep today's
+    # generate-and-take flow unchanged.
+    status: Mapped[str] = mapped_column(String(10), nullable=False, server_default="published")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
@@ -59,6 +66,7 @@ class Quiz(Base):
         CheckConstraint("char_length(trim(title)) > 0", name="quizzes_title_not_empty"),
         CheckConstraint(f"source_type IN {QUIZ_SOURCES}", name="quizzes_source_type_check"),
         CheckConstraint(f"difficulty IN {DIFFICULTIES}", name="quizzes_difficulty_check"),
+        CheckConstraint(f"status IN {QUIZ_STATUSES}", name="quizzes_status_check"),
         Index("quizzes_topic_id_index", "topic_id"),
     )
 

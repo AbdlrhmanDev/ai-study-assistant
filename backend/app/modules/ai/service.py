@@ -12,10 +12,12 @@ from ..study_history import repository as study_history_repository
 from ..topics import service as topics_service
 from . import indexing, provider, repository, retrieval, sparring, text_extraction
 from .exceptions import (
+    ChatMessageNotFoundError,
     DocumentNotFoundError,
     DocumentNotReadyError,
     EmptyAiResponseError,
     FileTooLargeError,
+    StorageQuotaExceededError,
     UnsupportedFileTypeError,
 )
 from .model import ChatMessage, Document
@@ -94,6 +96,8 @@ async def chat_with_tutor(
         description=f"Asked AI tutor about: {topic.title}",
     )
     await gamification_service.record_graded_action(db, user_id)
+    from ..growth.service import add_event
+    add_event(db, user_id, "first_ai_answer", {"topicId": topic_id, "messageId": messages["assistantMessage"].id})
     await db.commit()
 
     if background_tasks is not None:
@@ -285,6 +289,48 @@ async def clear_message_history(db: AsyncSession, topic_id: int, user_id: int) -
     return deleted
 
 
+async def submit_message_feedback(
+    db: AsyncSession, message_id: int, user_id: int, rating: int, reason: str | None,
+    comment: str | None = None,
+) -> dict:
+    owned = await repository.get_message_with_owner(db, message_id)
+    if owned is None or owned[1] != user_id:
+        raise ChatMessageNotFoundError()
+    feedback = await repository.upsert_message_feedback(
+        db, message_id=message_id, rating=rating, reason=reason
+    )
+    # AnswerFeedback (commentable, powers answer-quality funnels) is the
+    # growth analytics home for the same event; write it on the canonical
+    # path so `comment` is actually reachable instead of being shadowed.
+    from ..growth.service import rate_answer
+    await rate_answer(db, user_id, message_id, rating, reason, comment)
+    return {
+        "feedback": {
+            "messageId": feedback.message_id, "rating": feedback.rating, "reason": feedback.reason,
+        }
+    }
+
+
+async def record_source_click(
+    db: AsyncSession, message_id: int, user_id: int, *,
+    source_type: str, source_id: int, score: float | None = None,
+) -> None:
+    """Telemetry for which cited source a user opened. Whether cited chunks
+    are actually clicked is the closest proxy for "was the answer grounded in
+    the right material" that exists today; it feeds the source_click funnel."""
+    owned = await repository.get_message_with_owner(db, message_id)
+    if owned is None or owned[1] != user_id:
+        raise ChatMessageNotFoundError()
+    from ..growth.service import add_event
+    add_event(db, user_id, "source_click", {
+        "messageId": message_id,
+        "sourceType": source_type,
+        "sourceId": source_id,
+        "score": score,
+    })
+    await db.commit()
+
+
 # --------------------------------------------------------------------------
 # Documents
 # --------------------------------------------------------------------------
@@ -306,6 +352,12 @@ async def create_document(
     settings = get_settings()
     if len(raw_bytes) > settings.max_upload_bytes:
         raise FileTooLargeError(settings.max_upload_mb)
+    from ..plans.service import plan_limits_for_user
+    plan = await plan_limits_for_user(db, user_id)
+    storage_limit_bytes = plan["storageBytes"]
+    current_usage = await repository.sum_document_bytes_for_user(db, user_id)
+    if current_usage + len(raw_bytes) > storage_limit_bytes:
+        raise StorageQuotaExceededError(int(storage_limit_bytes // (1024 * 1024)))
     from .upload_security import scan_for_malware, validate_document
     content_type = validate_document(filename, content_type, raw_bytes)
     scan_for_malware(raw_bytes)
@@ -316,6 +368,7 @@ async def create_document(
         title=title or filename,
         original_filename=filename,
         content_type=content_type,
+        file_size_bytes=len(raw_bytes),
     )
     await db.commit()
     await db.refresh(document)
@@ -327,6 +380,8 @@ async def create_document(
         document_key(user_id, document.id, safe_suffix), raw_bytes, content_type
     )
     await repository.set_document_storage_path(db, document.id, storage_path)
+    from ..growth.service import add_event
+    add_event(db, user_id, "first_upload", {"topicId": topic_id, "documentId": document.id})
     await db.commit()
     await db.refresh(document)
 
@@ -366,6 +421,33 @@ async def list_documents(db: AsyncSession, topic_id: int, user_id: int) -> list[
     return await repository.list_documents_by_topic(db, topic_id)
 
 
+async def get_storage_usage(db: AsyncSession, user_id: int) -> dict:
+    from ..plans.service import plan_limits_for_user
+    plan = await plan_limits_for_user(db, user_id)
+    used_bytes = await repository.sum_document_bytes_for_user(db, user_id)
+    return {
+        "usedBytes": used_bytes,
+        "limitBytes": plan["storageBytes"],
+        "plan": plan["plan"],
+    }
+
+
+PREVIEW_CHAR_LIMIT = 20_000
+
+
+async def get_document_preview(db: AsyncSession, document_id: int, user_id: int) -> dict:
+    """The document's extracted text, truncated to a sane preview length --
+    this is what the AI tutor actually indexed, not a rendered facsimile of
+    the original file, so it doubles as a way to sanity-check what the tutor
+    can "see" from a given upload."""
+    document = await get_document(db, document_id, user_id)
+    if document.status != "completed" or document.extracted_text is None:
+        return {"text": None, "truncated": False, "status": document.status}
+    text = document.extracted_text
+    truncated = len(text) > PREVIEW_CHAR_LIMIT
+    return {"text": text[:PREVIEW_CHAR_LIMIT], "truncated": truncated, "status": document.status}
+
+
 async def delete_document(db: AsyncSession, document_id: int, user_id: int) -> None:
     """Idempotent: retrying after a previous storage-side failure still
     removes the DB row (and cascaded chunks) instead of getting stuck --
@@ -382,3 +464,40 @@ async def delete_document(db: AsyncSession, document_id: int, user_id: int) -> N
             )
     await repository.delete_document(db, document)
     await db.commit()
+
+
+def _current_embedding_model() -> str:
+    settings = get_settings()
+    return f"{settings.embedding_provider}:{settings.embedding_model}"
+
+
+async def get_reindex_status(db: AsyncSession, topic_id: int, user_id: int) -> dict:
+    """How many of this topic's chunks were embedded with a provider/model
+    other than the one currently configured -- e.g. after switching
+    `EMBEDDING_PROVIDER`. A non-zero count means retrieval quality for
+    those chunks reflects the old model, not necessarily the new one."""
+    await topics_service.get_owned_topic_or_404(db, topic_id, user_id)
+    current_model = _current_embedding_model()
+    stale_count = await repository.count_stale_chunks(db, topic_id, current_model)
+    return {"currentEmbeddingModel": current_model, "staleChunkCount": stale_count}
+
+
+async def reindex_topic(db: AsyncSession, topic_id: int, user_id: int) -> dict:
+    """Re-chunks and re-embeds every note and completed document in a
+    topic with the currently configured embedding provider/model. Each
+    note/document re-index is independently idempotent (delete-then-insert
+    chunks), so a failure partway through just leaves the remaining items
+    stale rather than corrupting anything already redone."""
+    from ..notes import repository as notes_repository
+
+    await topics_service.get_owned_topic_or_404(db, topic_id, user_id)
+    notes = await notes_repository.list_by_topic(db, topic_id, user_id)
+    documents = await repository.list_documents_by_topic(db, topic_id)
+    completed_documents = [document for document in documents if document.status == "completed"]
+
+    for note in notes:
+        await indexing.enqueue_note_index(note.id)
+    for document in completed_documents:
+        await indexing.enqueue_document_index(document.id)
+
+    return {"notesQueued": len(notes), "documentsQueued": len(completed_documents)}

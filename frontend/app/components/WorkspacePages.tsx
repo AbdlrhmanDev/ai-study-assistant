@@ -2,8 +2,8 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { FormEvent, useCallback, useEffect, useState } from "react";
-import { NotebookPen, Plus, Sparkles, Trash2, X } from "lucide-react";
+import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
+import { Download, NotebookPen, Plus, Sparkles, Trash2, Upload, X } from "lucide-react";
 import { PageShell, useAuthFailure } from "./shared/PageChrome";
 import { api, messageFromError, Topic } from "../lib/api";
 import { WorkspaceBlock, WorkspacePage } from "./workspace/types";
@@ -21,9 +21,24 @@ function blockPreview(blocks: WorkspaceBlock[]): string {
   return "Empty page -- click to start adding blocks.";
 }
 
+type ExportPage = {
+  id: number;
+  topicId: number | null;
+  title: string;
+  blocks: WorkspaceBlock[];
+  updatedAt: string;
+};
+
+type ImportPage = {
+  title: string;
+  topicId: number | null;
+  blocks: WorkspaceBlock[];
+};
+
 export function WorkspaceListPage() {
   const router = useRouter();
   const handleAuthFailure = useAuthFailure();
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [pages, setPages] = useState<WorkspacePage[]>([]);
   const [topics, setTopics] = useState<Topic[]>([]);
   const [loading, setLoading] = useState(true);
@@ -33,6 +48,7 @@ export function WorkspaceListPage() {
   const [deletingPage, setDeletingPage] = useState<WorkspacePage | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [deleteError, setDeleteError] = useState("");
+  const [importBusy, setImportBusy] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -96,12 +112,71 @@ export function WorkspaceListPage() {
   const topicTitle = (topicId: number | null) =>
     topicId ? topics.find((topic) => topic.id === topicId)?.title ?? null : null;
 
+  async function exportPages() {
+    setError("");
+    try {
+      const result = await api<{ pages: ExportPage[] }>("/workspace-pages/export");
+      const blob = new Blob([JSON.stringify(result, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `workspace-export-${new Date().toISOString().slice(0, 10)}.json`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+    } catch (requestError) {
+      setError(messageFromError(requestError));
+    }
+  }
+
+  async function importPagesFromFile(file: File) {
+    setImportBusy(true);
+    setError("");
+    try {
+      const parsed = JSON.parse(await file.text()) as { pages?: ImportPage[] } | ImportPage[];
+      const items = Array.isArray(parsed) ? parsed : parsed.pages;
+      if (!Array.isArray(items) || !items.length) {
+        throw new Error("Not a valid workspace export");
+      }
+      await api<{ pages: WorkspacePage[] }>("/workspace-pages/import", {
+        method: "POST",
+        body: JSON.stringify({ pages: items }),
+      });
+      await load();
+    } catch (requestError) {
+      setError(messageFromError(requestError));
+    } finally {
+      setImportBusy(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  }
+
   return (
     <PageShell
       className="workspace-list-page"
       title="Workspace"
       subtitle="Freeform pages for notes, checklists, and saved resources -- your way of organizing things."
-      action={<Button variant="primary" onClick={() => setShowModal(true)}><Plus size={16} strokeWidth={2.2} /> New page</Button>}
+      action={
+        <div className="workspace-header-actions">
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="application/json,.json"
+            className="sr-only"
+            aria-label="Import workspace pages from a JSON export"
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              if (file) void importPagesFromFile(file);
+            }}
+          />
+          <Button variant="secondary" onClick={() => void exportPages()}><Download size={16} /> Export</Button>
+          <Button variant="secondary" disabled={importBusy} onClick={() => fileInputRef.current?.click()}>
+            <Upload size={16} /> {importBusy ? "Importing…" : "Import"}
+          </Button>
+          <Button variant="primary" onClick={() => setShowModal(true)}><Plus size={16} strokeWidth={2.2} /> New page</Button>
+        </div>
+      }
     >
       {error && <p className="page-error" role="alert">{error}</p>}
       {loading ? (

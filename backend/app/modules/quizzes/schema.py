@@ -21,6 +21,7 @@ class QuizGenerate(StrictModel):
     timed: bool = False
     timeLimitSeconds: int | None = Field(None, ge=30, le=7200)
     adaptive: bool = False
+    preview: bool = False
 
     @model_validator(mode="after")
     def require_source_fields(self) -> "QuizGenerate":
@@ -46,6 +47,21 @@ class AnswerSubmit(StrictModel):
     answer: dict[str, Any]
 
 
+class QuestionEdit(StrictModel):
+    """Patch fields for a draft question. Only fields matching the
+    question's existing `question_type` are applied -- e.g. `correctIndex`
+    is ignored on a `true_false` question."""
+
+    prompt: str | None = Field(None, min_length=1, max_length=4000)
+    explanation: str | None = Field(None, min_length=1, max_length=4000)
+    concept: str | None = Field(None, min_length=1, max_length=200)
+    choices: list[str] | None = None
+    correctIndex: int | None = None
+    correctValue: bool | None = None
+    acceptedAnswers: list[str] | None = None
+    pairs: list[dict[str, str]] | None = None
+
+
 class QuizOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -60,6 +76,7 @@ class QuizOut(BaseModel):
     adaptive: bool
     timed: bool
     time_limit_seconds: int | None
+    status: str
     created_at: datetime
 
 

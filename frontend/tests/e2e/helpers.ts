@@ -9,7 +9,11 @@ export const topic = {
 };
 
 export async function mockApi(page: Page) {
-  await page.route("http://localhost:5000/api/v1/**", async (route) => {
+  // Matches by path rather than a fixed origin: the app calls the backend
+  // through a same-origin "/api/v1" rewrite proxy (see next.config.ts), not
+  // the absolute backend URL, so the intercepted request's origin is
+  // whatever baseURL the test run uses, not the backend's own host.
+  await page.route("**/api/v1/**", async (route) => {
     const request = route.request();
     const url = new URL(request.url());
     const path = url.pathname.replace("/api/v1", "");
@@ -48,6 +52,8 @@ export async function mockApi(page: Page) {
     if (path === "/topics/1/documents") return route.fulfill({ json: { documents: [] } });
     if (path.endsWith("/ai/messages")) return route.fulfill({ json: { messages: [] } });
     if (path.endsWith("/mastery/weak")) return route.fulfill({ json: { concepts: [] } });
+    if (path === "/quizzes/counts-by-topic") return route.fulfill({ json: { counts: {} } });
+    if (path === "/exams/counts-by-topic") return route.fulfill({ json: { counts: {} } });
     if (path.endsWith("/quizzes")) return route.fulfill({ json: { quizzes: [] } });
     if (path.endsWith("/exams")) return route.fulfill({ json: { exams: [] } });
     if (path.includes("/flashcards")) {
@@ -57,12 +63,17 @@ export async function mockApi(page: Page) {
       if (path.endsWith("/stats")) {
         return route.fulfill({ json: { total: 0, due_today: 0, difficult: 0, retention_rate: null } });
       }
+      if (path.endsWith("/deck-health")) {
+        return route.fulfill({ json: { new: 0, young: 0, mature: 0, archived: 0, leeches: 0 } });
+      }
       return route.fulfill({ json: { flashcards: [] } });
     }
     if (path === "/workspace-pages") return route.fulfill({ json: { pages: [] } });
     if (path.endsWith("/level")) return route.fulfill({ json: { totalXp: 0 } });
     if (path.includes("mind-map")) return route.fulfill({ json: { mindMap: null } });
     if (path.includes("knowledge-graph")) return route.fulfill({ json: { nodes: [], edges: [], belowMinimum: false } });
+    if (path.includes("reindex-status")) return route.fulfill({ json: { staleChunkCount: 0, currentEmbeddingModel: "gemini:gemini-embedding-001" } });
+    if (path.includes("storage-usage")) return route.fulfill({ json: { usedBytes: 0, limitBytes: 500 * 1024 * 1024 } });
 
     return route.fulfill({ json: {} });
   });

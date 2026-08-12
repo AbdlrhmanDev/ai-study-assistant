@@ -77,6 +77,9 @@ async def _dispatch(job: Job) -> None:
     elif job.type == "note.index":
         from ..modules.ai.indexing import _index_note
         await _index_note(int(job.payload["note_id"]))
+    elif job.type == "workspace_page.index":
+        from ..modules.ai.indexing import _index_workspace_page
+        await _index_workspace_page(int(job.payload["workspace_page_id"]))
     elif job.type == "memory.extract":
         from ..modules.memory.indexing import _extract_memory
         await _extract_memory(
@@ -170,10 +173,19 @@ async def run_cleanup_once() -> None:
     logger.info("cleanup_run_finished", **{k: v for k, v in results.items()})
 
 
+async def run_reminders_once() -> None:
+    """One-shot hourly reminder sweep for Railway Cron or equivalent."""
+    from ..modules.growth.reminders import send_due_review_reminders
+    results = await send_due_review_reminders()
+    logger.info("review_reminders_finished", **results)
+
+
 if __name__ == "__main__":
     import sys
 
     if "--cleanup" in sys.argv:
         asyncio.run(run_cleanup_once())
+    elif "--reminders" in sys.argv:
+        asyncio.run(run_reminders_once())
     else:
         asyncio.run(run_worker())

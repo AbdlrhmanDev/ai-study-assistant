@@ -8,6 +8,7 @@ import {
   BookOpen,
   ClipboardCheck,
   Download,
+  Eye,
   FileText,
   FolderInput,
   GitBranch,
@@ -105,6 +106,13 @@ export function TopicDetailPage() {
   const loadedToolsRef = useRef<Set<TopicTool>>(new Set());
   const [documentStatusAnnouncement, setDocumentStatusAnnouncement] = useState("");
   const priorDocumentStatusesRef = useRef<Map<number, StudyDocument["status"]>>(new Map());
+  const [staleChunkCount, setStaleChunkCount] = useState(0);
+  const [reindexing, setReindexing] = useState(false);
+  const [previewingDocument, setPreviewingDocument] = useState<StudyDocument | null>(null);
+  const [previewText, setPreviewText] = useState<string | null>(null);
+  const [previewTruncated, setPreviewTruncated] = useState(false);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewError, setPreviewError] = useState("");
 
   const toolUrl = useCallback((tool: TopicTool) => tool === "tutor" ? `/ai-tutor?topicId=${topicId}&embedded=1${tutorConcept ? `&concept=${encodeURIComponent(tutorConcept)}` : ""}`
     : tool === "quizzes" ? `/quizzes/topic?topicId=${topicId}&embedded=1`
@@ -183,7 +191,22 @@ export function TopicDetailPage() {
     api<TopicLevel>(`/topics/${topicId}/level`)
       .then((result) => setLevelProgress(result))
       .catch(() => setLevelProgress(null));
+    api<{ staleChunkCount: number }>(`/topics/${topicId}/reindex-status`)
+      .then((result) => setStaleChunkCount(result.staleChunkCount))
+      .catch(() => setStaleChunkCount(0));
   }, [topicId]);
+
+  async function reindexTopicMaterials() {
+    setReindexing(true);
+    try {
+      await api<{ notesQueued: number; documentsQueued: number }>(`/topics/${topicId}/reindex`, { method: "POST" });
+      setStaleChunkCount(0);
+    } catch {
+      // best-effort -- the banner just stays until the next successful retry
+    } finally {
+      setReindexing(false);
+    }
+  }
 
   // While any document is still being processed in the background, poll for
   // its status until it settles (completed/failed).
@@ -274,6 +297,23 @@ export function TopicDetailPage() {
       setUploadError(messageFromError(requestError));
     } finally {
       setRetryingDocumentId(null);
+    }
+  }
+
+  async function openPreview(document: StudyDocument) {
+    setPreviewingDocument(document);
+    setPreviewText(null);
+    setPreviewTruncated(false);
+    setPreviewError("");
+    setPreviewLoading(true);
+    try {
+      const result = await api<{ text: string | null; truncated: boolean }>(`/documents/${document.id}/preview`);
+      setPreviewText(result.text);
+      setPreviewTruncated(result.truncated);
+    } catch (requestError) {
+      setPreviewError(messageFromError(requestError));
+    } finally {
+      setPreviewLoading(false);
     }
   }
 
@@ -444,6 +484,15 @@ export function TopicDetailPage() {
           </div>
         )}
       </section>
+      {staleChunkCount > 0 && (
+        <div className="page-error" role="status">
+          {staleChunkCount} chunk{staleChunkCount === 1 ? "" : "s"} in this topic {staleChunkCount === 1 ? "was" : "were"} indexed with a
+          different AI embedding model than the one currently configured — search relevance for that material may be reduced.{" "}
+          <button type="button" className="danger-link" disabled={reindexing} onClick={() => void reindexTopicMaterials()}>
+            {reindexing ? "Re-indexing…" : "Re-index this topic's materials"}
+          </button>
+        </div>
+      )}
       <section className="notes-panel documents-panel topic-documents-card">
         <div className="section-head">
           <div className="documents-heading-copy">
@@ -481,6 +530,17 @@ export function TopicDetailPage() {
               meta={`Uploaded ${new Date(document.created_at).toLocaleDateString()}`}
               actions={<>
                 <Badge className="document-state-badge" tone={document.status === "completed" ? "success" : document.status === "failed" ? "danger" : "warning"}><span className="document-state-dot" aria-hidden="true" />{DOCUMENT_STATUS_LABELS[document.status]}</Badge>
+                {document.status === "completed" && (
+                  <button
+                    type="button"
+                    className="ui-icon-action"
+                    aria-label={`Preview ${humanizeFilename(document.title).label}`}
+                    title="Preview"
+                    onClick={() => void openPreview(document)}
+                  >
+                    <Eye size={17} />
+                  </button>
+                )}
                 {document.status === "failed" && (
                   <button
                     type="button"
@@ -632,6 +692,32 @@ export function TopicDetailPage() {
               <button type="button" className="button button-danger" disabled={deletingDocumentBusy} onClick={() => void confirmDeleteDocument()}>
                 {deletingDocumentBusy ? "Deleting…" : "Delete document"}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {previewingDocument && (
+        <div className="modal-backdrop" onMouseDown={() => setPreviewingDocument(null)}>
+          <div
+            role="dialog" aria-modal="true" aria-labelledby="preview-document-title"
+            className="topic-modal action-modal preview-modal" onMouseDown={(event) => event.stopPropagation()}
+          >
+            <button type="button" className="modal-close" aria-label="Close" onClick={() => setPreviewingDocument(null)}><X size={22} /></button>
+            <div className="modal-icon edit-icon"><Eye size={22} /></div>
+            <div className="eyebrow">DOCUMENT PREVIEW</div>
+            <h2 id="preview-document-title">{humanizeFilename(previewingDocument.title).label}</h2>
+            <p>What the AI tutor extracted and indexed from this file.</p>
+            {previewError && <p className="form-error">{previewError}</p>}
+            {previewLoading ? (
+              <div className="empty">Loading preview…</div>
+            ) : (
+              <>
+                <div className="document-preview-text" dir="auto">{previewText || "No text was extracted from this file."}</div>
+                {previewTruncated && <p className="document-preview-truncated">Preview truncated — the full text is longer than shown here.</p>}
+              </>
+            )}
+            <div className="modal-actions">
+              <button type="button" className="button button-secondary" onClick={() => setPreviewingDocument(null)}>Close</button>
             </div>
           </div>
         </div>

@@ -151,6 +151,7 @@ async def request_graph_rebuild(db: AsyncSession, topic_id: int, user_id: int) -
     job and returns immediately; without Redis (local dev/tests) the
     rebuild runs inline before returning, reusing this same session."""
     await topics_service.get_owned_topic_or_404(db, topic_id, user_id)
+    await build_status_service.assert_rebuild_allowed(db, topic_id=topic_id, build_type=BUILD_TYPE)
     await build_status_repository.set_status(db, topic_id=topic_id, build_type=BUILD_TYPE, status="pending")
     await db.commit()
 

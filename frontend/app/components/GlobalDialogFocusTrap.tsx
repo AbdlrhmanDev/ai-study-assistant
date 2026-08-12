@@ -26,6 +26,21 @@ const DIALOG_SELECTOR = '[role="dialog"], [role="alertdialog"]';
 const FOCUSABLE_SELECTOR =
   'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
+// Some dialog-role elements (e.g. the mobile nav's "more" sheet) stay
+// mounted in the DOM at all times and are only toggled via `display:none`,
+// so querySelectorAll(DIALOG_SELECTOR) can never be trusted to return only
+// dialogs that are actually open -- it must be filtered down to rendered
+// ones. `offsetParent === null` looks like the obvious check but is also
+// null for `position:fixed` elements even when visible (a real modal
+// pattern), so this checks computed `display` directly instead.
+function isRendered(el: HTMLElement): boolean {
+  return getComputedStyle(el).display !== "none";
+}
+
+function openDialogs(): HTMLElement[] {
+  return Array.from(document.querySelectorAll<HTMLElement>(DIALOG_SELECTOR)).filter(isRendered);
+}
+
 export function GlobalDialogFocusTrap() {
   const lastTriggerRef = useRef<HTMLElement | null>(null);
   const openDialogsRef = useRef<Set<Element>>(new Set());
@@ -47,17 +62,20 @@ export function GlobalDialogFocusTrap() {
     document.addEventListener("focusin", onFocusIn, true);
 
     function topmostDialog(): HTMLElement | null {
-      const dialogs = document.querySelectorAll<HTMLElement>(DIALOG_SELECTOR);
+      const dialogs = openDialogs();
       return dialogs.length ? dialogs[dialogs.length - 1] : null;
     }
 
     function focusFirst(dialog: HTMLElement) {
-      const focusable = dialog.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR);
-      (focusable[0] ?? dialog).focus();
+      const focusable = Array.from(dialog.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR));
+      // Skip the close button so opening a dialog lands focus on its first
+      // real field instead -- .modal-close is usually first in DOM order.
+      const target = focusable.find((el) => !el.classList.contains("modal-close")) ?? focusable[0] ?? dialog;
+      target.focus();
     }
 
     const observer = new MutationObserver(() => {
-      const current = new Set(Array.from(document.querySelectorAll(DIALOG_SELECTOR)));
+      const current = new Set(openDialogs());
 
       for (const node of current) {
         if (!openDialogsRef.current.has(node)) {
@@ -68,8 +86,11 @@ export function GlobalDialogFocusTrap() {
           window.setTimeout(() => focusFirst(node as HTMLElement), 0);
         }
       }
-      if (openDialogsRef.current.size > 0 && current.size === 0) {
-        lastTriggerRef.current?.focus?.();
+      for (const node of openDialogsRef.current) {
+        if (!current.has(node)) {
+          // A dialog just disappeared -- restore focus to whatever opened it.
+          lastTriggerRef.current?.focus?.();
+        }
       }
       openDialogsRef.current = current;
     });

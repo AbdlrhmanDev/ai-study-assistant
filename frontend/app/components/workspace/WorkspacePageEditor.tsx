@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { KeyboardEvent as ReactKeyboardEvent, useCallback, useEffect, useRef, useState } from "react";
-import { Trash2, X } from "lucide-react";
+import { History, Trash2, X } from "lucide-react";
+import { api, messageFromError } from "../../lib/api";
 import AppSidebar from "../AppSidebar";
 import { BlockList } from "./BlockRenderer";
 import SlashMenu from "./SlashMenu";
@@ -14,6 +15,8 @@ import { findBlock } from "./blockTree";
 import { BlockColor, BlockType, LinkPreview } from "./types";
 import { useWorkspaceEditor } from "./useWorkspaceEditor";
 import { BlockMenus } from "./workspaceContext";
+
+type WorkspacePageVersionSummary = { id: number; workspace_page_id: number; title: string; created_at: string };
 
 export function WorkspacePageEditor() {
   const params = useSearchParams();
@@ -33,6 +36,11 @@ export function WorkspacePageEditor() {
   const [highlightedBlockId, setHighlightedBlockId] = useState<string | null>(null);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
+  const [versions, setVersions] = useState<WorkspacePageVersionSummary[]>([]);
+  const [versionsLoading, setVersionsLoading] = useState(false);
+  const [versionsError, setVersionsError] = useState("");
+  const [restoringId, setRestoringId] = useState<number | null>(null);
 
   const slashKeyHandlerRef = useRef<(event: ReactKeyboardEvent) => boolean>(() => false);
 
@@ -107,6 +115,34 @@ export function WorkspacePageEditor() {
       editor.reorderRootBlocks(reordered);
     }
     setContextMenu(null);
+  }
+
+  async function openHistory() {
+    setShowHistory(true);
+    setVersionsLoading(true);
+    setVersionsError("");
+    try {
+      const result = await api<{ versions: WorkspacePageVersionSummary[] }>(`/workspace-pages/${pageId}/versions`);
+      setVersions(result.versions);
+    } catch (requestError) {
+      setVersionsError(messageFromError(requestError));
+    } finally {
+      setVersionsLoading(false);
+    }
+  }
+
+  async function restoreVersion(versionId: number) {
+    setRestoringId(versionId);
+    setVersionsError("");
+    try {
+      await api<null>(`/workspace-pages/${pageId}/versions/${versionId}/restore`, { method: "POST" });
+      await editor.reloadFromServer();
+      setShowHistory(false);
+    } catch (requestError) {
+      setVersionsError(messageFromError(requestError));
+    } finally {
+      setRestoringId(null);
+    }
   }
 
   async function deletePage() {
@@ -187,6 +223,7 @@ export function WorkspacePageEditor() {
               </div>
             </div>
             <div className="page-actions">
+              <button className="button button-secondary" onClick={() => void openHistory()}><History size={16} /> Version history</button>
               <button className="button button-secondary workspace-delete-page" onClick={() => setShowDeleteModal(true)}><Trash2 size={16} /> Delete page</button>
               <Link href="/workspace" className="back-topics">All pages</Link>
             </div>
@@ -243,6 +280,41 @@ export function WorkspacePageEditor() {
       />
 
       <AskAiPopover blockId={askAi?.blockId ?? null} anchorRect={askAi?.rect ?? null} open={!!askAi} editor={editor} onClose={() => setAskAi(null)} />
+
+      {showHistory && (
+        <div className="modal-backdrop" onMouseDown={() => setShowHistory(false)}>
+          <div
+            role="dialog" aria-modal="true" aria-labelledby="version-history-title"
+            className="topic-modal action-modal workspace-history-modal" onMouseDown={(event) => event.stopPropagation()}
+          >
+            <button type="button" className="modal-close" aria-label="Close" onClick={() => setShowHistory(false)}><X size={20} /></button>
+            <div className="eyebrow">RECOVERY SNAPSHOTS</div>
+            <h2 id="version-history-title">Version history</h2>
+            <p>Restoring saves your current content as a new snapshot first, so it&apos;s always undoable.</p>
+            {versionsError && <p className="form-error">{versionsError}</p>}
+            {versionsLoading ? <div className="empty">Loading versions…</div> : (
+              <div className="notes-list workspace-history-list">
+                {versions.map((version) => (
+                  <article key={version.id}>
+                    <div><div><h3>{version.title}</h3><p>{new Date(version.created_at).toLocaleString()}</p></div></div>
+                    <div className="note-actions">
+                      <button
+                        className="note-action" disabled={restoringId === version.id}
+                        onClick={() => void restoreVersion(version.id)}
+                      >
+                        {restoringId === version.id ? "Restoring…" : "Restore"}
+                      </button>
+                    </div>
+                  </article>
+                ))}
+                {!versions.length && (
+                  <div className="empty">No snapshots yet — they&apos;re created automatically as you edit.</div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {showDeleteModal && (
         <div className="modal-backdrop" onMouseDown={() => (deleting ? null : setShowDeleteModal(false))}>

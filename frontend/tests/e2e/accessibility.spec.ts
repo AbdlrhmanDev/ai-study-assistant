@@ -64,7 +64,15 @@ test("Tab stays trapped inside the create-topic dialog", async ({ page }) => {
   for (let i = 0; i < 8; i++) {
     await page.keyboard.press("Tab");
     const activeIsInsideDialog = await page.evaluate(() => {
-      const dialogEl = document.querySelector('[role="dialog"]');
+      // Some dialog-role elements (e.g. the mobile nav's "more" sheet) stay
+      // mounted in the DOM at all times and appear earlier than this one, so
+      // a plain querySelector for the first "[role=dialog]" can grab the
+      // wrong, hidden element -- filter to rendered dialogs and take the
+      // topmost, matching GlobalDialogFocusTrap's own logic.
+      const dialogs = Array.from(document.querySelectorAll('[role="dialog"], [role="alertdialog"]')).filter(
+        (el) => getComputedStyle(el).display !== "none",
+      );
+      const dialogEl = dialogs[dialogs.length - 1];
       return !!dialogEl && dialogEl.contains(document.activeElement);
     });
     expect(activeIsInsideDialog).toBe(true);

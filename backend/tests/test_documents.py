@@ -135,6 +135,98 @@ async def test_retry_document_resets_status_and_reindexes(
     assert retried.json()["document"]["status"] == "pending"
 
 
+async def test_document_preview_returns_extracted_text_once_completed(
+    authed_client: AsyncClient,
+    db_session: AsyncSession,
+    test_user: User,
+) -> None:
+    topic = await _make_topic(db_session, test_user)
+    upload = await authed_client.post(
+        f"/api/v1/topics/{topic.id}/documents",
+        files={"file": ("lesson.txt", b"content", "text/plain")},
+    )
+    document_id = upload.json()["document"]["id"]
+    await db_session.execute(
+        Document.__table__.update().where(Document.id == document_id).values(
+            status="completed", extracted_text="The mitochondria is the powerhouse of the cell."
+        )
+    )
+    await db_session.commit()
+
+    response = await authed_client.get(f"/api/v1/documents/{document_id}/preview")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "completed"
+    assert body["text"] == "The mitochondria is the powerhouse of the cell."
+    assert body["truncated"] is False
+
+
+async def test_document_preview_is_null_while_still_processing(
+    authed_client: AsyncClient,
+    db_session: AsyncSession,
+    test_user: User,
+) -> None:
+    topic = await _make_topic(db_session, test_user)
+    upload = await authed_client.post(
+        f"/api/v1/topics/{topic.id}/documents",
+        files={"file": ("lesson.txt", b"content", "text/plain")},
+    )
+    document_id = upload.json()["document"]["id"]
+
+    response = await authed_client.get(f"/api/v1/documents/{document_id}/preview")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "pending"
+    assert body["text"] is None
+
+
+async def test_document_preview_truncates_very_long_extracted_text(
+    authed_client: AsyncClient,
+    db_session: AsyncSession,
+    test_user: User,
+) -> None:
+    topic = await _make_topic(db_session, test_user)
+    upload = await authed_client.post(
+        f"/api/v1/topics/{topic.id}/documents",
+        files={"file": ("lesson.txt", b"content", "text/plain")},
+    )
+    document_id = upload.json()["document"]["id"]
+    long_text = "word " * 10_000
+    await db_session.execute(
+        Document.__table__.update().where(Document.id == document_id).values(
+            status="completed", extracted_text=long_text
+        )
+    )
+    await db_session.commit()
+
+    response = await authed_client.get(f"/api/v1/documents/{document_id}/preview")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["truncated"] is True
+    assert len(body["text"]) == 20_000
+
+
+async def test_document_preview_for_unowned_document_returns_404(
+    authed_client: AsyncClient,
+    db_session: AsyncSession,
+    other_user: User,
+) -> None:
+    topic = await _make_topic(db_session, other_user)
+    document = Document(
+        topic_id=topic.id, title="Other user's doc", original_filename="x.txt",
+        content_type="text/plain", status="completed", extracted_text="secret",
+    )
+    db_session.add(document)
+    await db_session.flush()
+
+    response = await authed_client.get(f"/api/v1/documents/{document.id}/preview")
+
+    assert response.status_code == 404
+
+
 async def test_download_url_unavailable_for_local_backend(
     authed_client: AsyncClient,
     db_session: AsyncSession,
@@ -149,6 +241,69 @@ async def test_download_url_unavailable_for_local_backend(
 
     response = await authed_client.get(f"/api/v1/documents/{document_id}/download-url")
     assert response.status_code == 409
+
+
+async def test_storage_usage_reports_used_and_limit_bytes(
+    authed_client: AsyncClient,
+    db_session: AsyncSession,
+    test_user: User,
+) -> None:
+    topic = await _make_topic(db_session, test_user)
+    content = b"x" * 1000
+    await authed_client.post(
+        f"/api/v1/topics/{topic.id}/documents",
+        files={"file": ("a.txt", content, "text/plain")},
+    )
+
+    response = await authed_client.get("/api/v1/documents/storage-usage")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["usedBytes"] == len(content)
+    assert body["limitBytes"] == get_settings().max_storage_bytes_per_user
+
+
+async def test_storage_usage_sums_across_all_of_a_users_topics(
+    authed_client: AsyncClient,
+    db_session: AsyncSession,
+    test_user: User,
+) -> None:
+    topic_a = await _make_topic(db_session, test_user)
+    topic_b = await _make_topic(db_session, test_user)
+    await authed_client.post(
+        f"/api/v1/topics/{topic_a.id}/documents",
+        files={"file": ("a.txt", b"x" * 500, "text/plain")},
+    )
+    await authed_client.post(
+        f"/api/v1/topics/{topic_b.id}/documents",
+        files={"file": ("b.txt", b"y" * 700, "text/plain")},
+    )
+
+    response = await authed_client.get("/api/v1/documents/storage-usage")
+
+    assert response.json()["usedBytes"] == 1200
+
+
+async def test_upload_rejected_when_it_would_exceed_storage_quota(
+    authed_client: AsyncClient,
+    db_session: AsyncSession,
+    test_user: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(get_settings(), "max_storage_mb_per_user", 1)
+    topic = await _make_topic(db_session, test_user)
+    oversized = b"x" * (2 * 1024 * 1024)
+
+    upload = await authed_client.post(
+        f"/api/v1/topics/{topic.id}/documents",
+        files={"file": ("big.txt", oversized, "text/plain")},
+    )
+
+    assert upload.status_code == 413, upload.text
+    assert "storage limit" in upload.json()["message"].lower()
+
+    listed = await authed_client.get(f"/api/v1/topics/{topic.id}/documents")
+    assert listed.json()["documents"] == []
 
 
 async def test_sweep_abandoned_uploads_fails_stuck_documents_idempotently(

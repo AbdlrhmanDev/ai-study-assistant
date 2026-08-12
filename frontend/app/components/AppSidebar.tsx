@@ -45,7 +45,7 @@ const mainItems = [
 ];
 
 const routeWarmups: Record<string, string[]> = {
-  "/dashboard": ["/dashboard"],
+  "/dashboard": ["/topics", "/flashcards/stats-summary", "/coach/plan/today", "/study-insights"],
   "/topics": ["/topics"],
   "/workspace": ["/workspace-pages", "/topics"],
   "/coach": ["/coach/plan/today", "/topics", "/coach/goals", "/goal-predictions"],

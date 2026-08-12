@@ -155,7 +155,7 @@ def add_roadmap_table(doc):
         ("Phase 3: Learning tools", "Planned", "Add quizzes generated from notes, configurable practice sessions, explanations for wrong answers, and progress by topic.", "More active recall and clearer evidence of learning progress."),
         ("Phase 4: Reminders and goals", "Planned", "Add study goals, review reminders, streaks based on real activity, and a weekly plan.", "Better study consistency and retention."),
         ("Phase 5: Reporting and export", "Planned", "Add downloadable notes, flashcards, study summaries, and supervisor/student progress reports.", "Portable learning materials and easier progress review."),
-        ("Phase 6: Experience improvements", "Future", "Improve accessibility, responsive/mobile behavior, onboarding guidance, error recovery, and optional dark mode.", "A more inclusive and polished user experience."),
+        ("Phase 6: Experience improvements", "Future", "Improve accessibility, responsive/mobile behavior, error recovery, and optional dark mode.", "A more inclusive and polished user experience."),
     ]
     table = doc.add_table(rows=1, cols=4)
     table.style = "Table Grid"

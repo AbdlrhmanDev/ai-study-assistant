@@ -18,18 +18,21 @@ from ..topics import service as topics_service
 from . import adaptive, diagnosis, grading, repository
 from .exceptions import (
     AnswerAlreadyCorrectError,
+    InvalidQuestionEditError,
     NoQuizSourceContentError,
     NoWeakAreasYetError,
     QuizAnswerNotFoundError,
     QuizAttemptNotFoundError,
     QuizGenerationParseError,
+    QuizNotEditableError,
     QuizNotFoundError,
+    QuizNotPublishedError,
     QuizQuestionNotFoundError,
     QuizSourceNotFoundError,
     QuizSourceNotReadyError,
 )
 from .model import Quiz, QuizAttempt, QuizQuestion
-from .schema import QuizGenerate, QuizOut
+from .schema import QuestionEdit, QuizGenerate, QuizOut
 
 MAX_EVIDENCE_CHARS = 14000
 RETRIEVAL_TOP_K = 12
@@ -85,6 +88,9 @@ def _build_evidence_block(items: list[EvidenceItem]) -> str:
     return "\n\n".join(parts) or "No material was found."
 
 
+MAX_AVOID_PROMPTS = 60
+
+
 def _build_generation_prompt(
     topic_title: str,
     evidence_block: str,
@@ -92,14 +98,19 @@ def _build_generation_prompt(
     difficulty: str,
     allowed_types: list[str],
     focus: str | None,
+    avoid_prompts: list[str] | None = None,
 ) -> str:
     focus_line = f"\nFocus especially on these concepts the student has struggled with: {focus}" if focus else ""
+    avoid_block = ""
+    if avoid_prompts:
+        sample = "\n".join(f"- {prompt}" for prompt in avoid_prompts[:MAX_AVOID_PROMPTS])
+        avoid_block = f"\n\nDo NOT repeat or closely paraphrase any of these already-asked questions:\n{sample}"
     return f"""TOPIC: {topic_title}
 
 EVIDENCE
 {evidence_block}
 
-Generate {count} {difficulty}-difficulty quiz questions using only these types: {', '.join(allowed_types)}.{focus_line}"""
+Generate {count} {difficulty}-difficulty quiz questions using only these types: {', '.join(allowed_types)}.{focus_line}{avoid_block}"""
 
 
 async def _call_ai(prompt: str) -> str:
@@ -134,6 +145,53 @@ def _extract_json_array(raw: str) -> list:
     return data
 
 
+def _build_options_and_answer(question_type: str, raw_item: dict) -> tuple[dict | None, dict] | None:
+    """Type-specific `options`/`correct_answer` shape, shared by both AI
+    generation (`_normalize_question`) and manual draft editing
+    (`edit_question`) so both paths validate identically."""
+    if question_type in ("multiple_choice", "scenario"):
+        choices = raw_item.get("choices")
+        correct_index = raw_item.get("correctIndex")
+        if not isinstance(choices, list) or not isinstance(correct_index, int):
+            return None
+        choices = [str(choice).strip() for choice in choices if str(choice).strip()]
+        if len(choices) < 2 or not (0 <= correct_index < len(choices)):
+            return None
+        return {"choices": choices}, {"index": correct_index}
+
+    if question_type == "true_false":
+        correct_value = raw_item.get("correctValue")
+        if not isinstance(correct_value, bool):
+            return None
+        return None, {"value": correct_value}
+
+    if question_type in ("short_answer", "fill_blank"):
+        accepted = raw_item.get("acceptedAnswers")
+        if not isinstance(accepted, list):
+            return None
+        accepted = [str(answer).strip() for answer in accepted if str(answer).strip()]
+        if not accepted:
+            return None
+        return None, {"accepted": accepted}
+
+    # matching
+    pairs = raw_item.get("pairs")
+    if not isinstance(pairs, list):
+        return None
+    clean_pairs = []
+    for pair in pairs:
+        if not isinstance(pair, dict):
+            continue
+        left, right = str(pair.get("left") or "").strip(), str(pair.get("right") or "").strip()
+        if left and right:
+            clean_pairs.append({"left": left, "right": right})
+    if len(clean_pairs) < 2:
+        return None
+    shuffled_right = [pair["right"] for pair in clean_pairs]
+    random.shuffle(shuffled_right)
+    return {"left": [pair["left"] for pair in clean_pairs], "right": shuffled_right}, {"pairs": clean_pairs}
+
+
 def _normalize_question(raw_item: dict, allowed_types: set[str], evidence: list[EvidenceItem]) -> dict | None:
     question_type = raw_item.get("type")
     if question_type not in allowed_types:
@@ -157,48 +215,10 @@ def _normalize_question(raw_item: dict, allowed_types: set[str], evidence: list[
         elif item.source_type == "document":
             source_document_id = item.source_id
 
-    if question_type in ("multiple_choice", "scenario"):
-        choices = raw_item.get("choices")
-        correct_index = raw_item.get("correctIndex")
-        if not isinstance(choices, list) or not isinstance(correct_index, int):
-            return None
-        choices = [str(choice).strip() for choice in choices if str(choice).strip()]
-        if len(choices) < 2 or not (0 <= correct_index < len(choices)):
-            return None
-        options, correct_answer = {"choices": choices}, {"index": correct_index}
-
-    elif question_type == "true_false":
-        correct_value = raw_item.get("correctValue")
-        if not isinstance(correct_value, bool):
-            return None
-        options, correct_answer = None, {"value": correct_value}
-
-    elif question_type in ("short_answer", "fill_blank"):
-        accepted = raw_item.get("acceptedAnswers")
-        if not isinstance(accepted, list):
-            return None
-        accepted = [str(answer).strip() for answer in accepted if str(answer).strip()]
-        if not accepted:
-            return None
-        options, correct_answer = None, {"accepted": accepted}
-
-    else:  # matching
-        pairs = raw_item.get("pairs")
-        if not isinstance(pairs, list):
-            return None
-        clean_pairs = []
-        for pair in pairs:
-            if not isinstance(pair, dict):
-                continue
-            left, right = str(pair.get("left") or "").strip(), str(pair.get("right") or "").strip()
-            if left and right:
-                clean_pairs.append({"left": left, "right": right})
-        if len(clean_pairs) < 2:
-            return None
-        shuffled_right = [pair["right"] for pair in clean_pairs]
-        random.shuffle(shuffled_right)
-        options = {"left": [pair["left"] for pair in clean_pairs], "right": shuffled_right}
-        correct_answer = {"pairs": clean_pairs}
+    built = _build_options_and_answer(question_type, raw_item)
+    if built is None:
+        return None
+    options, correct_answer = built
 
     return {
         "question_type": question_type, "concept": concept, "prompt": prompt,
@@ -206,6 +226,10 @@ def _normalize_question(raw_item: dict, allowed_types: set[str], evidence: list[
         "source_note_id": source_note_id, "source_document_id": source_document_id,
         "difficulty_score": difficulty_score,
     }
+
+
+def _normalize_prompt_key(prompt: str) -> str:
+    return re.sub(r"\s+", " ", prompt.strip().lower())
 
 
 async def _gather_evidence(
@@ -290,21 +314,35 @@ async def generate_quiz(
         db, topic, topic_id, user_id, payload
     )
     evidence_block = _build_evidence_block(evidence)
+    existing_prompts = await repository.list_existing_prompts_for_topic(db, topic_id)
 
     raw_answer = await _call_ai(_build_generation_prompt(
         topic.title, evidence_block, payload.count, payload.difficulty, payload.questionTypes, weak_focus,
+        avoid_prompts=existing_prompts,
     ))
     raw_items = _extract_json_array(raw_answer)
     allowed_types = set(payload.questionTypes)
 
-    normalized = []
+    existing_keys = {_normalize_prompt_key(prompt) for prompt in existing_prompts}
+    seen_keys: set[str] = set()
+    all_valid, deduped = [], []
     for item in raw_items:
         if not isinstance(item, dict):
             continue
         result = _normalize_question(item, allowed_types, evidence)
-        if result:
-            normalized.append(result)
-    normalized = normalized[: payload.count]
+        if not result:
+            continue
+        all_valid.append(result)
+        key = _normalize_prompt_key(result["prompt"])
+        if key in existing_keys or key in seen_keys:
+            continue
+        seen_keys.add(key)
+        deduped.append(result)
+
+    # Prefer the deduplicated set, but never let anti-duplication filtering
+    # alone turn a successful generation into a hard failure -- an
+    # AI-repeated question is still a usable quiz, just not an ideal one.
+    normalized = (deduped or all_valid)[: payload.count]
     if not normalized:
         raise QuizGenerationParseError()
 
@@ -314,6 +352,8 @@ async def generate_quiz(
         time_limit_seconds=payload.timeLimitSeconds, note_id=note_id, document_id=document_id,
         concept=concept_label, adaptive=payload.adaptive,
     )
+    if payload.preview:
+        quiz = await repository.set_quiz_status(db, quiz, status="draft")
 
     created: list[QuestionWithSource] = []
     for index, item in enumerate(normalized):
@@ -334,6 +374,8 @@ async def generate_quiz(
         db, user_id=user_id, topic_id=topic_id, activity_type="quiz_generated",
         description=f"Generated a {len(created)}-question quiz for {topic.title}",
     )
+    from ..growth.service import add_event
+    add_event(db, user_id, "first_quiz", {"topicId": topic_id, "quizId": quiz.id})
     await db.commit()
     await db.refresh(quiz)
     for question, _source_type, _source_title in created:
@@ -373,6 +415,240 @@ async def delete_quiz(db: AsyncSession, quiz_id: int, user_id: int) -> None:
     await db.commit()
 
 
+async def publish_quiz(db: AsyncSession, quiz_id: int, user_id: int) -> Quiz:
+    quiz = await repository.get_quiz_for_user(db, quiz_id, user_id)
+    if quiz is None:
+        raise QuizNotFoundError()
+    if quiz.status != "published":
+        quiz = await repository.set_quiz_status(db, quiz, status="published")
+        await db.commit()
+        await db.refresh(quiz)
+    return quiz
+
+
+async def _get_owned_draft_question(
+    db: AsyncSession, quiz_id: int, question_id: int, user_id: int
+) -> tuple[Quiz, QuizQuestion]:
+    quiz = await repository.get_quiz_for_user(db, quiz_id, user_id)
+    if quiz is None:
+        raise QuizNotFoundError()
+    if quiz.status != "draft":
+        raise QuizNotEditableError()
+    question_row = await repository.get_question_for_quiz(db, question_id, quiz_id)
+    if question_row is None:
+        raise QuizQuestionNotFoundError()
+    return quiz, question_row[0]
+
+
+async def edit_question(
+    db: AsyncSession, quiz_id: int, question_id: int, user_id: int, payload: QuestionEdit
+) -> QuizQuestion:
+    _quiz, question = await _get_owned_draft_question(db, quiz_id, question_id, user_id)
+
+    type_fields = {
+        "choices": payload.choices, "correctIndex": payload.correctIndex,
+        "correctValue": payload.correctValue, "acceptedAnswers": payload.acceptedAnswers,
+        "pairs": payload.pairs,
+    }
+    update_answer_shape = any(value is not None for value in type_fields.values())
+    options, correct_answer = question.options, question.correct_answer
+    if update_answer_shape:
+        built = _build_options_and_answer(question.question_type, type_fields)
+        if built is None:
+            raise InvalidQuestionEditError()
+        options, correct_answer = built
+
+    question = await repository.update_question(
+        db, question,
+        prompt=payload.prompt, explanation=payload.explanation, concept=payload.concept,
+        options=options, correct_answer=correct_answer, update_answer_shape=update_answer_shape,
+    )
+    await db.commit()
+    return question
+
+
+async def get_question_with_source(
+    db: AsyncSession, quiz_id: int, question_id: int, user_id: int
+) -> tuple[QuizQuestion, str | None, str | None]:
+    quiz = await repository.get_quiz_for_user(db, quiz_id, user_id)
+    if quiz is None:
+        raise QuizNotFoundError()
+    question_row = await repository.get_question_for_quiz(db, question_id, quiz_id)
+    if question_row is None:
+        raise QuizQuestionNotFoundError()
+    return question_row
+
+
+async def delete_question(db: AsyncSession, quiz_id: int, question_id: int, user_id: int) -> None:
+    _quiz, question = await _get_owned_draft_question(db, quiz_id, question_id, user_id)
+    await repository.delete_question(db, question)
+    await db.commit()
+
+
+async def regenerate_question(
+    db: AsyncSession, quiz_id: int, question_id: int, user_id: int
+) -> tuple[QuizQuestion, str | None, str | None]:
+    quiz, question = await _get_owned_draft_question(db, quiz_id, question_id, user_id)
+    topic = await topics_service.get_owned_topic_or_404(db, quiz.topic_id, user_id)
+
+    evidence, _weak_focus, _note_id, _document_id, _concept_label = await _gather_evidence(
+        db, topic, quiz.topic_id, user_id,
+        QuizGenerate(
+            source=quiz.source_type, noteId=quiz.note_id, documentId=quiz.document_id,
+            concept=quiz.concept or (question.concept if quiz.source_type == "concept" else None),
+            count=1, difficulty=quiz.difficulty, questionTypes=[question.question_type],
+        ),
+    )
+    evidence_block = _build_evidence_block(evidence)
+    existing_prompts = await repository.list_existing_prompts_for_topic(db, quiz.topic_id)
+
+    prompt = _build_generation_prompt(
+        topic.title, evidence_block, 1, quiz.difficulty, [question.question_type], None,
+        avoid_prompts=[*existing_prompts, question.prompt],
+    ) + (
+        "\n\nRefine this existing question rather than inventing a completely unrelated one:\n"
+        f"Concept: {question.concept}\nPrompt: {question.prompt}"
+    )
+    raw_items = _extract_json_array(await _call_ai(prompt))
+    normalized = None
+    for item in raw_items:
+        if not isinstance(item, dict):
+            continue
+        result = _normalize_question(item, {question.question_type}, evidence)
+        if result:
+            normalized = result
+            break
+    if normalized is None:
+        raise QuizGenerationParseError()
+
+    question = await repository.update_question(
+        db, question,
+        prompt=normalized["prompt"], explanation=normalized["explanation"], concept=normalized["concept"],
+        options=normalized["options"], correct_answer=normalized["correct_answer"], update_answer_shape=True,
+        difficulty_score=normalized["difficulty_score"],
+        source_note_id=normalized["source_note_id"], source_document_id=normalized["source_document_id"],
+        update_source=True,
+    )
+    await db.commit()
+    await db.refresh(question)
+
+    source_type = "note" if question.source_note_id else "document" if question.source_document_id else None
+    source_title = next(
+        (
+            item.source_title for item in evidence
+            if item.source_type == source_type
+            and item.source_id == (question.source_note_id or question.source_document_id)
+        ),
+        None,
+    ) if source_type else None
+    return question, source_type, source_title
+
+
+async def get_quiz_analytics(db: AsyncSession, quiz_id: int, user_id: int) -> dict:
+    quiz = await repository.get_quiz_for_user(db, quiz_id, user_id)
+    if quiz is None:
+        raise QuizNotFoundError()
+    questions = await repository.question_analytics(db, quiz_id)
+    for entry in questions:
+        times = entry["timesAnswered"]
+        entry["accuracy"] = round(entry["correctCount"] / times, 3) if times else None
+    return {"quizId": quiz_id, "questions": questions}
+
+
+async def get_topic_quiz_calibration(db: AsyncSession, topic_id: int, user_id: int) -> dict:
+    """Aggregate quiz analytics for a topic, including difficulty
+    calibration: how far each question's *observed* difficulty (1 - accuracy)
+    is from the difficulty score the AI assigned at generation. Large deltas
+    flag badly calibrated questions, and the concept roll-up ranks
+    most-missed concepts -- the input a UI "balanced difficulty" mode would
+    use to tune future generation."""
+    await topics_service.get_owned_topic_or_404(db, topic_id, user_id)
+    stats = await repository.topic_question_stats(db, topic_id, user_id)
+    answer_times = await repository.per_question_answer_times(db, topic_id, user_id)
+
+    questions = []
+    concept_stats: dict[str, dict] = {}
+    time_sum = 0.0
+    time_count = 0
+    accuracy_sum = 0.0
+    accuracy_count = 0
+    for row in stats:
+        times_answered = row["timesAnswered"]
+        correct = row["correctCount"]
+        accuracy = round(correct / times_answered, 3) if times_answered else None
+        observed = round(1 - accuracy, 3) if accuracy is not None else None
+        assigned = round(row["assignedDifficulty"], 3)
+        calibration_delta = round(observed - assigned, 3) if observed is not None else None
+        entry_times = answer_times.get(row["questionId"], [])
+        average_time = round(sum(entry_times) / len(entry_times), 1) if entry_times else None
+        if average_time is not None:
+            time_sum += average_time
+            time_count += 1
+        if accuracy is not None:
+            accuracy_sum += accuracy
+            accuracy_count += 1
+        questions.append({
+            "questionId": row["questionId"],
+            "concept": row["concept"],
+            "questionType": row["questionType"],
+            "prompt": row["prompt"],
+            "timesAnswered": times_answered,
+            "correctCount": correct,
+            "accuracy": accuracy,
+            "assignedDifficulty": assigned,
+            "observedDifficulty": observed,
+            "calibrationDelta": calibration_delta,
+            "averageTimeSeconds": average_time,
+        })
+        concept = concept_stats.setdefault(
+            row["concept"], {"concept": row["concept"], "timesAnswered": 0, "correctCount": 0}
+        )
+        concept["timesAnswered"] += times_answered
+        concept["correctCount"] += correct
+
+    concepts = [
+        {
+            **entry,
+            "accuracy": round(entry["correctCount"] / entry["timesAnswered"], 3)
+            if entry["timesAnswered"]
+            else None,
+            "incorrectCount": entry["timesAnswered"] - entry["correctCount"],
+        }
+        for entry in sorted(
+            concept_stats.values(), key=lambda item: item["timesAnswered"] - item["correctCount"], reverse=True
+        )
+    ]
+
+    mis_calibrated = sorted(
+        (entry for entry in questions if entry["calibrationDelta"] is not None),
+        key=lambda entry: abs(entry["calibrationDelta"]),
+        reverse=True,
+    )[:5]
+
+    average_accuracy = round(accuracy_sum / accuracy_count, 3) if accuracy_count else None
+    recommended_difficulty = None
+    if average_accuracy is not None:
+        if average_accuracy < 0.5:
+            recommended_difficulty = "easy"
+        elif average_accuracy <= 0.75:
+            recommended_difficulty = "medium"
+        else:
+            recommended_difficulty = "hard"
+
+    return {
+        "topicId": topic_id,
+        "averages": {
+            "averageAccuracy": average_accuracy,
+            "averageTimePerQuestionSeconds": round(time_sum / time_count, 1) if time_count else None,
+            "recommendedDifficulty": recommended_difficulty,
+        },
+        "questions": questions,
+        "concepts": concepts,
+        "mostMissedConcepts": concepts[:5],
+        "misCalibratedQuestions": mis_calibrated,
+    }
+
+
 async def list_attempts(db: AsyncSession, quiz_id: int, user_id: int) -> list[QuizAttempt]:
     quiz = await repository.get_quiz_for_user(db, quiz_id, user_id)
     if quiz is None:
@@ -384,6 +660,8 @@ async def start_attempt(db: AsyncSession, quiz_id: int, user_id: int, immediate_
     quiz = await repository.get_quiz_for_user(db, quiz_id, user_id)
     if quiz is None:
         raise QuizNotFoundError()
+    if quiz.status != "published":
+        raise QuizNotPublishedError()
     attempt = await repository.create_attempt(
         db, quiz_id=quiz_id, user_id=user_id, immediate_feedback=immediate_feedback
     )

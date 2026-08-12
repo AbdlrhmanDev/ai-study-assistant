@@ -34,3 +34,13 @@ class NoExamSourceContentError(AppError):
 class ExamGenerationParseError(AppError):
     def __init__(self) -> None:
         super().__init__("The AI tutor's exam response could not be parsed", 502)
+
+
+class ExamNotEditableError(AppError):
+    def __init__(self) -> None:
+        super().__init__("Only draft exams can be edited", 409)
+
+
+class ExamQuestionEditError(AppError):
+    def __init__(self) -> None:
+        super().__init__("The question edit doesn't match the question type", 422)

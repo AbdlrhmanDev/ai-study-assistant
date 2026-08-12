@@ -23,6 +23,25 @@ type TopCost = { topUsers: { userId: number; estimatedCostUsd: number }[]; topFe
 
 type GroupBy = "feature" | "provider" | "user";
 
+type RetentionCohort = {
+  weekStart: string;
+  signups: number;
+  retainedByWeek: number[];
+  retainedWeek1Rate: number | null;
+  retainedMonth1Rate: number | null;
+};
+
+type Retention = {
+  weeks: number;
+  cohorts: RetentionCohort[];
+  totals: {
+    signups: number;
+    retainedWeek1Rate: number | null;
+    retainedMonth1Rate: number | null;
+    activeLastWeek: number;
+  };
+};
+
 export function AdminUsagePage() {
   const handleAuthFailure = useAuthFailure();
   const [notAuthorized, setNotAuthorized] = useState(false);
@@ -34,6 +53,7 @@ export function AdminUsagePage() {
   const [usage, setUsage] = useState<UsageRow[]>([]);
   const [failures, setFailures] = useState<FailureRow[]>([]);
   const [topCost, setTopCost] = useState<TopCost | null>(null);
+  const [retention, setRetention] = useState<Retention | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -44,16 +64,18 @@ export function AdminUsagePage() {
     if (toDate) params.set("to", toDate);
     params.set("groupBy", groupBy);
     try {
-      const [summary, failureResult, topCostResult] = await Promise.all([
+      const [summary, failureResult, topCostResult, retentionResult] = await Promise.all([
         api<{ usage: UsageRow[] }>(`/usage/admin/summary?${params.toString()}`),
         api<{ failures: FailureRow[] }>(
           `/usage/admin/failures?${fromDate ? `from=${fromDate}&` : ""}${toDate ? `to=${toDate}` : ""}`,
         ),
         api<TopCost>(`/usage/admin/top-cost?${fromDate ? `from=${fromDate}&` : ""}${toDate ? `to=${toDate}` : ""}`),
+        api<Retention>(`/analytics/retention?weeks=8`),
       ]);
       setUsage(summary.usage);
       setFailures(failureResult.failures);
       setTopCost(topCostResult);
+      setRetention(retentionResult);
     } catch (requestError) {
       if (requestError instanceof ApiError && requestError.status === 404) {
         setNotAuthorized(true);
@@ -174,6 +196,41 @@ export function AdminUsagePage() {
                   <ul>{topCost.topFeatures.map((row) => <li key={row.feature}>{row.feature} — ${row.estimatedCostUsd.toFixed(2)}</li>)}</ul>
                 </div>
               </div>
+            </Card>
+          )}
+
+          {retention && retention.cohorts.length > 0 && (
+            <Card className="admin-table-card">
+              <h2>Retention by signup cohort</h2>
+              <div className="admin-table-scroll">
+                <table className="admin-table">
+                  <thead>
+                    <tr><th>Cohort week</th><th>Signups</th><th>Week 0</th><th>W1</th><th>W2</th><th>W3</th><th>W4</th><th>Retained W1</th><th>Retained month 1</th></tr>
+                  </thead>
+                  <tbody>
+                    {retention.cohorts.map((cohort) => (
+                      <tr key={cohort.weekStart}>
+                        <td>{cohort.weekStart}</td>
+                        <td>{cohort.signups}</td>
+                        <td>{cohort.retainedByWeek[0] ?? 0}</td>
+                        <td>{cohort.retainedByWeek[1] ?? 0}</td>
+                        <td>{cohort.retainedByWeek[2] ?? 0}</td>
+                        <td>{cohort.retainedByWeek[3] ?? 0}</td>
+                        <td>{cohort.retainedByWeek[4] ?? 0}</td>
+                        <td>{cohort.retainedWeek1Rate !== null ? `${(cohort.retainedWeek1Rate * 100).toFixed(1)}%` : "—"}</td>
+                        <td>{cohort.retainedMonth1Rate !== null ? `${(cohort.retainedMonth1Rate * 100).toFixed(1)}%` : "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <p className="admin-table-note">
+                Overall: {retention.totals.signups} signups · W1 retention{" "}
+                {retention.totals.retainedWeek1Rate !== null ? `${(retention.totals.retainedWeek1Rate * 100).toFixed(1)}%` : "—"}
+                {" · "}Month-1 retention{" "}
+                {retention.totals.retainedMonth1Rate !== null ? `${(retention.totals.retainedMonth1Rate * 100).toFixed(1)}%` : "—"}
+                {" · "}Active last week {retention.totals.activeLastWeek}
+              </p>
             </Card>
           )}
         </>

@@ -74,6 +74,9 @@ async def _reset_background_jobs_table() -> None:
             await connection.execute(text("TRUNCATE TABLE background_jobs"))
             await connection.execute(text("TRUNCATE TABLE usage_events"))
             await connection.execute(text("TRUNCATE TABLE cleanup_runs"))
+            await connection.execute(text("TRUNCATE TABLE product_events"))
+            await connection.execute(text("TRUNCATE TABLE answer_feedback"))
+            await connection.execute(text("TRUNCATE TABLE reminder_deliveries"))
     except Exception as exc:
         pytest.exit(
             "Unable to connect to the isolated Studia test database. "

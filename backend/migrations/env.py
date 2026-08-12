@@ -1,4 +1,5 @@
 import asyncio
+import sys
 from logging.config import fileConfig
 
 from sqlalchemy import pool
@@ -35,6 +36,7 @@ from app.modules.topics.model import Topic  # noqa: F401
 from app.modules.users.model import User  # noqa: F401
 from app.modules.workspace.model import WorkspacePage  # noqa: F401
 from app.modules.usage.model import UsageEvent  # noqa: F401
+from app.modules.growth.model import ProductEvent  # noqa: F401
 
 config = context.config
 config.set_main_option("sqlalchemy.url", get_settings().sqlalchemy_database_url)
@@ -43,6 +45,9 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 target_metadata = Base.metadata
+
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 
 def run_migrations_offline() -> None:

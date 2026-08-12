@@ -90,6 +90,8 @@ async def register(db: AsyncSession, *, name: str, email: str, password: str) ->
     password_hash = await hash_password(password)
     try:
         user = await repository.create(db, name=name, email=email, password_hash=password_hash)
+        from ..growth.service import add_event
+        add_event(db, user.id, "signup")
         await db.commit()
     except IntegrityError as error:
         await db.rollback()

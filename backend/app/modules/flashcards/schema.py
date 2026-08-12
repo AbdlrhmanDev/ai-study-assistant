@@ -33,6 +33,11 @@ class FlashcardArchiveIn(StrictModel):
     archived: bool
 
 
+class FlashcardBulkIn(StrictModel):
+    action: Literal["archive", "unarchive", "delete"]
+    flashcardIds: list[int] = Field(min_length=1, max_length=500)
+
+
 class FlashcardGenerate(StrictModel):
     source: Literal["topic", "note", "document"] = "topic"
     noteId: int | None = Field(None, gt=0)

@@ -15,6 +15,7 @@ class User(Base):
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     profile_image_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
     profile_image_content_type: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    plan: Mapped[str] = mapped_column(String(20), nullable=False, server_default="beta")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
@@ -25,5 +26,9 @@ class User(Base):
     __table_args__ = (
         CheckConstraint("char_length(trim(name)) >= 2", name="users_name_not_empty"),
         CheckConstraint("char_length(trim(email)) > 0", name="users_email_not_empty"),
+        CheckConstraint(
+            "char_length(trim(plan)) > 0 AND plan = lower(plan)",
+            name="users_plan_valid",
+        ),
         Index("users_email_unique", func.lower(email), unique=True),
     )

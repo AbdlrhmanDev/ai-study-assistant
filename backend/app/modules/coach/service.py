@@ -1,3 +1,16 @@
+"""Daily study-plan generation.
+
+How this module relates to mastery/knowledge_graph/mind_map: Mastery is the
+single source of truth for per-concept skill level (a decaying 0-1 score
+driven by graded quiz/exam/flashcard/sparring events). Coach reads ONLY
+Mastery's weak-concept list to build today's plan -- it has no dependency
+on Knowledge Graph or Mind Map. Knowledge Graph visualizes the same
+`Concept` rows Mastery scores against, plus AI-extracted relationships
+between them, colored by Mastery score -- "how do these ideas connect, and
+which am I weak on." Mind Map is a separate, purely structural outline of a
+topic's material (title + nested children) with no mastery coloring and no
+relation types -- a navigation aid, not a skill-tracking artifact.
+"""
 from datetime import date
 
 from sqlalchemy.ext.asyncio import AsyncSession

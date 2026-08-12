@@ -7,13 +7,14 @@ from ...core.config import get_settings
 
 TOKEN_RE = re.compile(r"[\w'-]+", re.UNICODE)
 
-SourceType = Literal["note", "document"]
+SourceType = Literal["note", "document", "workspace_page"]
 
 
 @dataclass
 class ChunkRow:
-    """A single already-chunked piece of content, from either a note or an
-    uploaded document, as read from the `document_chunks` table."""
+    """A single already-chunked piece of content, from a note, an uploaded
+    document, or a topic-linked workspace page, as read from the
+    `document_chunks` table."""
 
     chunk_id: int
     source_type: SourceType

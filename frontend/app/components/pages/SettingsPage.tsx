@@ -25,7 +25,11 @@ type AccountSession = {
   isCurrent: boolean;
 };
 
-function AccountSecurityPanel() {
+function formatMegabytes(bytes: number): string {
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function AccountSecurityPanel({ username }: { username: string }) {
   const router = useRouter();
   const [sessions, setSessions] = useState<AccountSession[]>([]);
   const [sessionsLoading, setSessionsLoading] = useState(true);
@@ -41,6 +45,8 @@ function AccountSecurityPanel() {
 
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState("");
+
+  const [storageUsage, setStorageUsage] = useState<{ usedBytes: number; limitBytes: number } | null>(null);
 
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [deletePassword, setDeletePassword] = useState("");
@@ -65,6 +71,12 @@ function AccountSecurityPanel() {
   useEffect(() => {
     void loadSessions();
   }, [loadSessions]);
+
+  useEffect(() => {
+    api<{ usedBytes: number; limitBytes: number }>("/documents/storage-usage")
+      .then(setStorageUsage)
+      .catch(() => setStorageUsage(null));
+  }, []);
 
   async function revokeSession(sessionId: string) {
     setBusySessionId(sessionId);
@@ -155,6 +167,7 @@ function AccountSecurityPanel() {
         <div className="settings-section">
           <div><h2>Change password</h2><p>Use a password you don&apos;t use anywhere else.</p></div>
           <form className="settings-form" onSubmit={changePassword}>
+            <input className="sr-only" type="text" name="username" autoComplete="username" value={username} readOnly tabIndex={-1} aria-hidden="true" />
             <label>Current password
               <input
                 type="password" required minLength={1} maxLength={128} autoComplete="current-password"
@@ -225,6 +238,19 @@ function AccountSecurityPanel() {
           </div>
         </div>
       </section>
+
+      {storageUsage && (
+        <section className="settings-panel">
+          <div className="settings-section">
+            <div><h2>Storage</h2><p>How much space your uploaded documents are using.</p></div>
+            <ProgressBar
+              label="Documents storage"
+              value={(storageUsage.usedBytes / storageUsage.limitBytes) * 100}
+              detail={`${formatMegabytes(storageUsage.usedBytes)} of ${formatMegabytes(storageUsage.limitBytes)} used`}
+            />
+          </div>
+        </section>
+      )}
 
       <section className="settings-panel danger-zone">
         <div className="settings-section">
@@ -504,6 +530,7 @@ export function SettingsPage() {
   const [error, setError] = useState("");
   const [usage, setUsage] = useState<UsageSummary | null>(null);
   const [photoUploading, setPhotoUploading] = useState(false);
+  const [reminders, setReminders] = useState({ emailEnabled: false, hourLocal: 18, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC", minimumDueCards: 1 });
   const photoInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -514,7 +541,20 @@ export function SettingsPage() {
 
   useEffect(() => {
     api<UsageSummary>("/usage/me").then(setUsage).catch(() => setUsage(null));
+    api<typeof reminders>("/reminders/preferences").then(setReminders).catch(() => undefined);
   }, []);
+
+  async function saveReminders() {
+    setError("");
+    try {
+      const result = await api<typeof reminders>("/reminders/preferences", { method: "PUT", body: JSON.stringify(reminders) });
+      setReminders(result);
+      setSaved(true);
+      window.setTimeout(() => setSaved(false), 2500);
+    } catch (requestError) {
+      setError(messageFromError(requestError));
+    }
+  }
 
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -581,6 +621,15 @@ export function SettingsPage() {
           ) : <div className="empty">Loading your profile…</div>}
         </div>
         <div className="settings-section">
+          <div><h2>Review reminders</h2><p>Get one quiet email when flashcards are due. Reminders are off until you enable them.</p></div>
+          <div className="settings-form">
+            <label className="toggle-row full"><span><b>Email review nudges</b><small>Only sent when the number of due cards reaches your threshold.</small></span><input type="checkbox" role="switch" checked={reminders.emailEnabled} onChange={(event) => setReminders((current) => ({ ...current, emailEnabled: event.target.checked }))} /></label>
+            <label>Reminder hour<select value={reminders.hourLocal} onChange={(event) => setReminders((current) => ({ ...current, hourLocal: Number(event.target.value) }))}>{Array.from({ length: 24 }, (_, hour) => <option value={hour} key={hour}>{String(hour).padStart(2, "0")}:00</option>)}</select></label>
+            <label>Minimum due cards<input type="number" min={1} max={500} value={reminders.minimumDueCards} onChange={(event) => setReminders((current) => ({ ...current, minimumDueCards: Number(event.target.value) }))} /></label>
+            <div className="settings-actions full"><button className="button button-secondary" type="button" onClick={() => void saveReminders()}>Save reminders</button></div>
+          </div>
+        </div>
+        <div className="settings-section">
           <div className="toggle-row">
             <span><b>Dark mode</b><small>Switch the whole app between light and dark themes.</small></span>
             <input
@@ -608,7 +657,7 @@ export function SettingsPage() {
         )}
       </section>
       <LearningStylePanel />
-      <AccountSecurityPanel />
+      <AccountSecurityPanel username={user?.email ?? ""} />
     </PageShell>
   );
 }

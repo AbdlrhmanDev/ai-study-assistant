@@ -115,7 +115,15 @@ export function LoadingState({ label = "Loading…" }: { label?: string }) {
   return (
     <div className="ui-loading-state" role="status" aria-label={label}>
       <div className="ui-loading-copy"><i aria-hidden="true" />{label}</div>
-      <div className="ui-loading-skeleton" aria-hidden="true"><i /><i /><i /></div>
+      <div className="ui-loading-skeleton" aria-hidden="true">
+        {[0, 1, 2].map((index) => (
+          <i key={index}>
+            <span className="ui-skeleton-icon" />
+            <span className="ui-skeleton-line ui-skeleton-line-title" />
+            <span className="ui-skeleton-line ui-skeleton-line-sub" />
+          </i>
+        ))}
+      </div>
     </div>
   );
 }
