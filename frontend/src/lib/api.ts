@@ -113,20 +113,37 @@ function mutationResource(path: string): string {
   return path.split("/").filter(Boolean)[0] ?? "";
 }
 
+// Callers filter out auth mutations before reaching here (see clearGetCache),
+// so `resource` is never "auth" in this function.
 function invalidatedByMutation(cachedPath: string, mutationPath: string): boolean {
   const resource = mutationResource(mutationPath);
-  if (cachedPath === "/dashboard/overview") return resource !== "auth";
+  if (cachedPath === "/dashboard/overview") return true;
   if (resource === "quizzes") return cachedPath.includes("quiz");
   if (resource === "flashcards") return cachedPath.includes("flashcard");
   if (resource === "ai") return cachedPath.includes("/ai/") || cachedPath === "/ai/bootstrap";
   if (resource === "topics") return cachedPath.includes("topic") || cachedPath === "/ai/bootstrap";
   if (resource === "coach") return cachedPath.includes("coach") || cachedPath.includes("goal");
-  if (resource === "auth") return cachedPath === "/auth/me";
   return cachedPath.startsWith(`/${resource}`);
 }
 
 function clearGetCache(mutationPath: string) {
   cacheGeneration += 1;
+
+  // Auth mutations (login/logout/register) change *who* is asking, so every
+  // cached response -- not just /auth/me -- could belong to the wrong user.
+  // Flush everything rather than relying on the per-resource heuristic below.
+  if (mutationResource(mutationPath) === "auth") {
+    completedGets.clear();
+    if (typeof window !== "undefined") {
+      try {
+        window.sessionStorage.removeItem(SESSION_CACHE_KEY);
+      } catch {
+        // ignore
+      }
+    }
+    return;
+  }
+
   for (const path of completedGets.keys()) {
     if (invalidatedByMutation(path, mutationPath)) completedGets.delete(path);
   }
