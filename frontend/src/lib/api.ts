@@ -134,6 +134,7 @@ function clearGetCache(mutationPath: string) {
   // Flush everything rather than relying on the per-resource heuristic below.
   if (mutationResource(mutationPath) === "auth") {
     completedGets.clear();
+    inFlightGets.clear();
     if (typeof window !== "undefined") {
       try {
         window.sessionStorage.removeItem(SESSION_CACHE_KEY);
