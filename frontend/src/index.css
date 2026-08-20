@@ -1,0 +1,297 @@
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300..900;1,9..144,300..900&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap');
+@import 'tailwindcss';
+
+@theme inline {
+  --font-sans: 'Outfit', system-ui, sans-serif;
+  --font-serif: 'Fraunces', Georgia, serif;
+}
+
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+/* ─── Color tokens ───────────────────────────────────────────────── */
+:root {
+  /* Page content */
+  --color-bg: #f7f5f1;
+  --color-surface: #ffffff;
+  --color-surface-2: #faf9f7;
+  --color-border: #e8e4de;
+  --color-border-soft: #f0ece6;
+  --color-text: #18160f;
+  --color-text-2: #3a3630;
+  --color-text-muted: #8b8580;
+  --color-text-subtle: #a8a3a0;
+  --color-alert-warm-bg: #faeee7;
+  --color-alert-peach-bg: #fdeee8;
+  --color-alert-red-bg: #fde9e4;
+  --marketing-header-bg: rgba(247,245,241,0.92);
+
+  /* Sidebar / shell */
+  --shell-sidebar-bg: #ffffff;
+  --shell-sidebar-border: #e8e4de;
+  --shell-logo-text: #18160f;
+  --shell-nav-text: #3a3630;
+  --shell-nav-muted: #a8a3a0;
+  --shell-nav-active-bg: #ede9ff;
+  --shell-nav-active-text: #6d5ef6;
+  --shell-nav-hover-bg: #f7f5f1;
+  --shell-footer-border: #e8e4de;
+  --shell-mobile-bg: #ffffff;
+  --shell-mobile-border: #e8e4de;
+  --shell-tab-bg: #ffffff;
+  --shell-tab-border: #ede9e3;
+  --shell-more-bg: #ffffff;
+  --shell-more-item-bg: #f7f5f1;
+  --shell-user-text: #18160f;
+  --shell-user-sub: #8b8580;
+}
+
+[data-theme="dark"] {
+  /* Page content */
+  --color-bg: #111008;
+  --color-surface: #1c1a15;
+  --color-surface-2: #252118;
+  --color-border: rgba(255,255,255,0.08);
+  --color-border-soft: rgba(255,255,255,0.05);
+  --color-text: #f4f2ee;
+  --color-text-2: rgba(244,242,238,0.75);
+  --color-text-muted: rgba(244,242,238,0.45);
+  --color-text-subtle: rgba(244,242,238,0.3);
+  --color-alert-warm-bg: rgba(232,132,90,0.14);
+  --color-alert-peach-bg: rgba(209,123,92,0.14);
+  --color-alert-red-bg: rgba(192,74,43,0.14);
+  --marketing-header-bg: rgba(28,26,21,0.92);
+
+  /* Sidebar / shell */
+  --shell-sidebar-bg: #1a1814;
+  --shell-sidebar-border: rgba(255,255,255,0.07);
+  --shell-logo-text: #f4f2ee;
+  --shell-nav-text: rgba(255,255,255,0.65);
+  --shell-nav-muted: rgba(255,255,255,0.28);
+  --shell-nav-active-bg: rgba(109,94,246,0.28);
+  --shell-nav-active-text: #a89eff;
+  --shell-nav-hover-bg: rgba(255,255,255,0.06);
+  --shell-footer-border: rgba(255,255,255,0.07);
+  --shell-mobile-bg: #1a1814;
+  --shell-mobile-border: rgba(255,255,255,0.07);
+  --shell-tab-bg: rgba(26,24,20,0.95);
+  --shell-tab-border: rgba(255,255,255,0.07);
+  --shell-more-bg: #252118;
+  --shell-more-item-bg: rgba(255,255,255,0.05);
+  --shell-user-text: rgba(255,255,255,0.85);
+  --shell-user-sub: rgba(255,255,255,0.3);
+}
+
+body {
+  background-color: var(--color-bg);
+  color: var(--color-text);
+  font-family: 'Outfit', system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  transition: background 0.25s, color 0.25s;
+}
+
+/* Dark-mode compatibility for the imported design.
+   The original screens use inline light-theme colours extensively. These
+   selectors translate the shared neutral palette without changing accents. */
+[data-theme="dark"] [style*="background:#fff"],
+[data-theme="dark"] [style*="background: #fff"],
+[data-theme="dark"] [style*="background:#ffffff"],
+[data-theme="dark"] [style*="background: #ffffff"],
+[data-theme="dark"] [style*="background:white"],
+[data-theme="dark"] [style*="background: white"] {
+  background: var(--color-surface) !important;
+}
+
+[data-theme="dark"] [style*="background:#faf9f7"],
+[data-theme="dark"] [style*="background: #faf9f7"],
+[data-theme="dark"] [style*="background:#f7f5f1"],
+[data-theme="dark"] [style*="background: #f7f5f1"],
+[data-theme="dark"] [style*="background:#f5f2ed"],
+[data-theme="dark"] [style*="background: #f5f2ed"],
+[data-theme="dark"] [style*="background:#f0ece6"],
+[data-theme="dark"] [style*="background: #f0ece6"],
+[data-theme="dark"] [style*="background:#ede9e3"],
+[data-theme="dark"] [style*="background: #ede9e3"] {
+  background: var(--color-surface-2) !important;
+}
+
+[data-theme="dark"] [style*="color:#18160f"],
+[data-theme="dark"] [style*="color: #18160f"] {
+  color: var(--color-text) !important;
+}
+
+[data-theme="dark"] [style*="color:#3a3630"],
+[data-theme="dark"] [style*="color: #3a3630"],
+[data-theme="dark"] [style*="color:#6b6660"],
+[data-theme="dark"] [style*="color: #6b6660"] {
+  color: var(--color-text-2) !important;
+}
+
+[data-theme="dark"] [style*="color:#8b8580"],
+[data-theme="dark"] [style*="color: #8b8580"] {
+  color: var(--color-text-muted) !important;
+}
+
+[data-theme="dark"] [style*="color:#a8a3a0"],
+[data-theme="dark"] [style*="color: #a8a3a0"],
+[data-theme="dark"] [style*="color:#c0bab5"],
+[data-theme="dark"] [style*="color: #c0bab5"] {
+  color: var(--color-text-subtle) !important;
+}
+
+[data-theme="dark"] [style*="border-color:#e8e4de"],
+[data-theme="dark"] [style*="border-color: #e8e4de"],
+[data-theme="dark"] [style*="border:1px solid #e8e4de"],
+[data-theme="dark"] [style*="border: 1px solid #e8e4de"],
+[data-theme="dark"] [style*="border:1.5px solid #e8e4de"],
+[data-theme="dark"] [style*="border: 1.5px solid #e8e4de"],
+[data-theme="dark"] [style*="border:1px solid #ede9e3"],
+[data-theme="dark"] [style*="border: 1px solid #ede9e3"],
+[data-theme="dark"] [style*="border:1px solid #f0ece6"],
+[data-theme="dark"] [style*="border: 1px solid #f0ece6"] {
+  border-color: var(--color-border) !important;
+}
+
+[data-theme="dark"] input,
+[data-theme="dark"] textarea,
+[data-theme="dark"] select {
+  color: var(--color-text);
+  caret-color: var(--color-text);
+}
+
+[data-theme="dark"] input::placeholder,
+[data-theme="dark"] textarea::placeholder {
+  color: var(--color-text-muted);
+  opacity: 1;
+}
+
+[data-theme="dark"] svg [stroke="#18160f"],
+[data-theme="dark"] svg[stroke="#18160f"],
+[data-theme="dark"] svg [stroke="#3a3630"],
+[data-theme="dark"] svg[stroke="#3a3630"] {
+  stroke: var(--color-text);
+}
+
+[data-theme="dark"] svg [stroke="#8b8580"],
+[data-theme="dark"] svg[stroke="#8b8580"],
+[data-theme="dark"] svg [stroke="#a8a3a0"],
+[data-theme="dark"] svg[stroke="#a8a3a0"] {
+  stroke: var(--color-text-muted);
+}
+
+/* React normalises inline HEX colours to rgb() in the hydrated DOM. */
+[data-theme="dark"] [style*="background: rgb(255, 255, 255)"],
+[data-theme="dark"] [style*="background-color: rgb(255, 255, 255)"] {
+  background-color: var(--color-surface) !important;
+}
+
+[data-theme="dark"] [style*="background: rgb(250, 249, 247)"],
+[data-theme="dark"] [style*="background: rgb(247, 245, 241)"],
+[data-theme="dark"] [style*="background: rgb(245, 242, 237)"],
+[data-theme="dark"] [style*="background: rgb(240, 236, 230)"],
+[data-theme="dark"] [style*="background: rgb(237, 233, 227)"],
+[data-theme="dark"] [style*="background-color: rgb(250, 249, 247)"],
+[data-theme="dark"] [style*="background-color: rgb(247, 245, 241)"],
+[data-theme="dark"] [style*="background-color: rgb(245, 242, 237)"],
+[data-theme="dark"] [style*="background-color: rgb(240, 236, 230)"] {
+  background-color: var(--color-surface-2) !important;
+}
+
+[data-theme="dark"] [style*="color: rgb(24, 22, 15)"] {
+  color: var(--color-text) !important;
+}
+
+[data-theme="dark"] [style*="color: rgb(58, 54, 48)"],
+[data-theme="dark"] [style*="color: rgb(107, 102, 96)"] {
+  color: var(--color-text-2) !important;
+}
+
+[data-theme="dark"] [style*="color: rgb(139, 133, 128)"] {
+  color: var(--color-text-muted) !important;
+}
+
+[data-theme="dark"] [style*="color: rgb(168, 163, 160)"],
+[data-theme="dark"] [style*="color: rgb(192, 186, 181)"] {
+  color: var(--color-text-subtle) !important;
+}
+
+[data-theme="dark"] [style*="border-color: rgb(232, 228, 222)"],
+[data-theme="dark"] [style*="border-color: rgb(237, 233, 227)"],
+[data-theme="dark"] [style*="border-color: rgb(240, 236, 230)"],
+[data-theme="dark"] [style*="border: 1px solid rgb(232, 228, 222)"],
+[data-theme="dark"] [style*="border: 1px solid rgb(237, 233, 227)"],
+[data-theme="dark"] [style*="border: 1px solid rgb(240, 236, 230)"] {
+  border-color: var(--color-border) !important;
+}
+
+/* Keep tinted status cards readable without glowing in dark mode. */
+[data-theme="dark"] [style*="background: rgb(237, 233, 255)"],
+[data-theme="dark"] [style*="background-color: rgb(237, 233, 255)"] {
+  background-color: rgba(109, 94, 246, 0.18) !important;
+}
+
+[data-theme="dark"] [style*="background: rgb(250, 238, 231)"],
+[data-theme="dark"] [style*="background-color: rgb(250, 238, 231)"] {
+  background-color: rgba(232, 132, 90, 0.16) !important;
+}
+
+[data-theme="dark"] [style*="background: rgb(228, 244, 238)"],
+[data-theme="dark"] [style*="background-color: rgb(228, 244, 238)"] {
+  background-color: rgba(90, 181, 142, 0.16) !important;
+}
+
+[data-theme="dark"] hr {
+  border-color: var(--color-border);
+}
+
+/* ─── Scrollbar ──────────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--color-border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--color-text-subtle); }
+
+/* ─── Selection ─────────────────────────────────────────────────── */
+::selection { background: #ede9ff; color: #18160f; }
+
+/* ─── Sidebar nav items ─────────────────────────────────────────── */
+.nav-item { transition: background 0.12s, color 0.12s; }
+.nav-item:hover { background: var(--shell-nav-hover-bg) !important; }
+.nav-active { background: var(--shell-nav-active-bg) !important; }
+
+/* ─── Block editor contenteditable ─────────────────────────────── */
+.block-editor [contenteditable]:empty::before {
+  content: attr(data-placeholder);
+  color: #a8a3a0;
+  pointer-events: none;
+}
+
+.block-editor [contenteditable]:focus {
+  outline: none;
+}
+
+/* Slash command menu animation */
+@keyframes slideDown {
+  from { opacity: 0; transform: translateY(-6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.slash-menu {
+  animation: slideDown 0.15s ease;
+}
+
+/* Block drag handle */
+.block-row:hover .block-handle { opacity: 1; }
+.block-handle { opacity: 0; transition: opacity 0.15s; }
+
+/* Bounce dots for thinking state */
+@keyframes bounce {
+  0%, 100% { transform: translateY(0); opacity: 0.4; }
+  50% { transform: translateY(-4px); opacity: 1; }
+}

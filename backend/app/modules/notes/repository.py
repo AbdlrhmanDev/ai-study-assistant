@@ -68,6 +68,18 @@ async def count_by_topic(db: AsyncSession, topic_id: int, user_id: int) -> int:
     return result.scalar_one()
 
 
+async def count_by_topic_for_user(db: AsyncSession, user_id: int) -> dict[int, int]:
+    """Count notes for every owned topic in one grouped query."""
+    stmt = (
+        select(Topic.id, func.count(Note.id))
+        .outerjoin(Note, Note.topic_id == Topic.id)
+        .where(Topic.user_id == user_id)
+        .group_by(Topic.id)
+    )
+    result = await db.execute(stmt)
+    return {topic_id: count for topic_id, count in result.all()}
+
+
 async def list_paginated_by_topic(
     db: AsyncSession, topic_id: int, user_id: int, limit: int, offset: int
 ) -> list[Note]:

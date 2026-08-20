@@ -80,6 +80,7 @@ def public_user(user: User) -> dict:
         "name": user.name,
         "email": user.email,
         "profileImageUrl": profile_image_url(user),
+        "emailVerified": user.email_verified_at is not None,
     }
 
 

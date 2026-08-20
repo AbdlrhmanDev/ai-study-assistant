@@ -6,6 +6,7 @@ from ...modules.analytics.router import router as analytics_router
 from ...modules.auth.router import router as auth_router
 from ...modules.cleanup.router import router as cleanup_router
 from ...modules.coach.router import router as coach_router
+from ...modules.dashboard.router import router as dashboard_router
 from ...modules.exams.router import router as exams_router
 from ...modules.export.router import router as export_router
 from ...modules.flashcards.router import router as flashcards_router
@@ -36,6 +37,7 @@ from ...modules.users.router import router as users_router
 api_router = APIRouter(prefix="/api/v1")
 api_router.include_router(agents_router)
 api_router.include_router(analytics_router)
+api_router.include_router(dashboard_router)
 api_router.include_router(auth_router)
 api_router.include_router(cleanup_router)
 api_router.include_router(topics_router)

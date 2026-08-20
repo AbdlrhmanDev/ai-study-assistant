@@ -1,10 +1,10 @@
 from datetime import datetime
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .model import UserSession
+from .model import EmailVerificationToken, PasswordResetToken, UserSession
 
 
 async def get_active(db: AsyncSession, token_hash: str, now: datetime) -> UserSession | None:
@@ -66,3 +66,62 @@ async def delete_all_by_user_except(db: AsyncSession, user_id: int, keep_token_h
         stmt = stmt.where(UserSession.id != keep_token_hash)
     result = await db.execute(stmt)
     return result.rowcount or 0
+
+
+async def delete_all_by_user(db: AsyncSession, user_id: int) -> int:
+    result = await db.execute(delete(UserSession).where(UserSession.user_id == user_id))
+    return result.rowcount or 0
+
+
+# --------------------------------------------------------------------------
+# Email verification tokens
+# --------------------------------------------------------------------------
+
+
+async def create_email_verification_token(
+    db: AsyncSession, *, token_hash: str, user_id: int, expires_at: datetime
+) -> None:
+    # A fresh request supersedes any previously issued (unclicked) link --
+    # only the newest one should ever be valid.
+    await db.execute(delete(EmailVerificationToken).where(EmailVerificationToken.user_id == user_id))
+    db.add(EmailVerificationToken(id=token_hash, user_id=user_id, expires_at=expires_at))
+
+
+async def get_valid_email_verification_token(
+    db: AsyncSession, token_hash: str, now: datetime
+) -> EmailVerificationToken | None:
+    row = await db.get(EmailVerificationToken, token_hash)
+    return row if row is not None and row.expires_at > now else None
+
+
+async def delete_email_verification_tokens_for_user(db: AsyncSession, user_id: int) -> None:
+    await db.execute(delete(EmailVerificationToken).where(EmailVerificationToken.user_id == user_id))
+
+
+# --------------------------------------------------------------------------
+# Password reset tokens
+# --------------------------------------------------------------------------
+
+
+async def create_password_reset_token(
+    db: AsyncSession, *, token_hash: str, user_id: int, expires_at: datetime
+) -> None:
+    # Same reasoning as email verification: a new request invalidates any
+    # reset link sent earlier that hasn't been used yet.
+    await db.execute(delete(PasswordResetToken).where(PasswordResetToken.user_id == user_id))
+    db.add(PasswordResetToken(id=token_hash, user_id=user_id, expires_at=expires_at))
+
+
+async def get_valid_password_reset_token(
+    db: AsyncSession, token_hash: str, now: datetime
+) -> PasswordResetToken | None:
+    row = await db.get(PasswordResetToken, token_hash)
+    if row is None or row.used_at is not None or row.expires_at <= now:
+        return None
+    return row
+
+
+async def mark_password_reset_token_used(db: AsyncSession, token_hash: str) -> None:
+    await db.execute(
+        update(PasswordResetToken).where(PasswordResetToken.id == token_hash).values(used_at=func.now())
+    )

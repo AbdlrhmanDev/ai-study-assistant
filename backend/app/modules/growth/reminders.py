@@ -1,12 +1,11 @@
-import smtplib
 from datetime import datetime, time, timezone
-from email.message import EmailMessage
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi.concurrency import run_in_threadpool
 from sqlalchemy import select
 
 from ...core.config import get_settings
+from ...core.mail import send_email_sync
 from ...db.session import get_sessionmaker
 from ..flashcards import repository as flashcards_repository
 from ..users.model import User
@@ -15,22 +14,12 @@ from .model import ReminderDelivery, ReminderPreference
 
 def _send_email(to_email: str, due_cards: int) -> None:
     settings = get_settings()
-    if not settings.smtp_host or not settings.smtp_from_email:
-        raise RuntimeError("SMTP_HOST and SMTP_FROM_EMAIL are required for reminders")
-    message = EmailMessage()
-    message["Subject"] = f"You have {due_cards} Studia flashcards ready"
-    message["From"] = settings.smtp_from_email
-    message["To"] = to_email
-    message.set_content(
+    send_email_sync(
+        to_email,
+        f"You have {due_cards} Studia flashcards ready",
         f"A short review keeps your memory strong. You have {due_cards} cards ready.\n\n"
-        f"Start reviewing: {settings.app_public_url.rstrip('/')}/flashcards"
+        f"Start reviewing: {settings.app_public_url.rstrip('/')}/flashcards",
     )
-    with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=20) as client:
-        if settings.smtp_use_tls:
-            client.starttls()
-        if settings.smtp_username:
-            client.login(settings.smtp_username, settings.smtp_password)
-        client.send_message(message)
 
 
 async def send_due_review_reminders(now: datetime | None = None) -> dict[str, int]:

@@ -6,7 +6,7 @@ from ...db.dependencies import DbSession
 from ...shared.responses import no_content
 from . import service
 from .dependencies import CurrentUser
-from .schema import LoginIn, ProfileUpdate, RegisterIn
+from .schema import ForgotPasswordIn, LoginIn, ProfileUpdate, RegisterIn, ResetPasswordIn
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -69,3 +69,27 @@ async def update_profile(
         email=str(payload.email) if payload.email else None,
     )
     return {"user": updated}
+
+
+@router.post("/verify-email/request", status_code=status.HTTP_202_ACCEPTED)
+async def request_verify_email(db: DbSession, user: CurrentUser):
+    await service.request_email_verification(db, int(user["id"]), str(user["email"]))
+    return {"sent": True}
+
+
+@router.post("/verify-email/{token}", dependencies=auth_rate_limited)
+async def verify_email(token: str, db: DbSession):
+    return await service.verify_email(db, token)
+
+
+@router.post(
+    "/forgot-password", status_code=status.HTTP_202_ACCEPTED, dependencies=auth_rate_limited
+)
+async def forgot_password(payload: ForgotPasswordIn, db: DbSession):
+    await service.request_password_reset(db, str(payload.email))
+    return {"sent": True}
+
+
+@router.post("/reset-password", dependencies=auth_rate_limited)
+async def reset_password(payload: ResetPasswordIn, db: DbSession):
+    return await service.reset_password(db, payload.token, payload.newPassword)

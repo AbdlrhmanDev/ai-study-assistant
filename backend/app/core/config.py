@@ -91,7 +91,7 @@ class Settings(BaseSettings):
 
     ai_provider: str = Field("gemini", alias="AI_PROVIDER")
     gemini_api_key: str = Field("", alias="GEMINI_API_KEY")
-    gemini_model: str = Field("gemini-2.5-flash", alias="GEMINI_MODEL")
+    gemini_model: str = Field("gemini-flash-latest", alias="GEMINI_MODEL")
     groq_api_key: str = Field("", alias="GROQ_API_KEY")
     groq_model: str = Field("llama-3.3-70b-versatile", alias="GROQ_MODEL")
     openai_api_key: str = Field("", alias="OPENAI_API_KEY")
@@ -165,6 +165,12 @@ class Settings(BaseSettings):
     smtp_from_email: str = Field("", alias="SMTP_FROM_EMAIL")
     smtp_use_tls: bool = Field(True, alias="SMTP_USE_TLS")
     app_public_url: str = Field("http://localhost:3000", alias="APP_PUBLIC_URL")
+    email_verification_token_ttl_minutes: int = Field(
+        1440, alias="EMAIL_VERIFICATION_TOKEN_TTL_MINUTES", ge=5
+    )
+    password_reset_token_ttl_minutes: int = Field(
+        30, alias="PASSWORD_RESET_TOKEN_TTL_MINUTES", ge=5
+    )
 
     @field_validator("ai_provider")
     @classmethod

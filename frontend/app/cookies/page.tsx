@@ -1,2 +1,0 @@
-import Link from "next/link";
-export default function CookiesPage() { return <main className="legal-page"><Link href="/">← Studia</Link><h1>Cookie Notice</h1><p>Studia uses a strictly necessary secure session cookie to keep you signed in and protect your account. It is not used for advertising.</p><p>Non-essential analytics must remain disabled unless the deployment records consent before loading them.</p></main>; }

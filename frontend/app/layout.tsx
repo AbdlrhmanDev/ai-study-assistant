@@ -1,28 +1,16 @@
 import type { Metadata } from "next";
-import "./globals.css";
-import { THEME_SCRIPT } from "./lib/theme-script";
-import { ThemeProvider } from "./components/ThemeProvider";
-import { ErrorBoundary } from "./components/ErrorBoundary";
-import { GlobalDialogFocusTrap } from "./components/GlobalDialogFocusTrap";
+import "../src/index.css";
+import AppProviders from "../src/components/AppProviders";
 
 export const metadata: Metadata = {
-  title: "Studia — AI Study Assistant",
-  description: "Organize your learning, understand difficult topics, and practice with an AI-powered study companion.",
-  icons: { icon: "/favicon.svg" },
+  title: "Studia | AI Study Assistant",
+  description: "An AI-powered workspace for learning, practice, and review.",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="en" suppressHydrationWarning>
-      <head>
-        <script dangerouslySetInnerHTML={{ __html: THEME_SCRIPT }} />
-      </head>
-      <body>
-        <ErrorBoundary>
-          <ThemeProvider>{children}</ThemeProvider>
-          <GlobalDialogFocusTrap />
-        </ErrorBoundary>
-      </body>
+    <html lang="en">
+      <body><AppProviders>{children}</AppProviders></body>
     </html>
   );
 }

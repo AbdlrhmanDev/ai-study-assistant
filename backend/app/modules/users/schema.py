@@ -8,6 +8,7 @@ class UserOut(BaseModel):
     name: str
     email: str
     profileImageUrl: str | None = None
+    emailVerified: bool = False
 
 
 class StrictModel(BaseModel):

@@ -84,7 +84,7 @@ async def material_signature(db: AsyncSession, topic_id: int, user_id: int) -> s
     quizzes/exams/flashcards instead of serving stale AI output."""
     notes_count, notes_updated = (
         await db.execute(
-            select(func.count(Note.id), func.max(Note.updated_at)).where(Note.topic_id == topic_id, Note.user_id == user_id)
+            select(func.count(Note.id), func.max(Note.updated_at)).where(Note.topic_id == topic_id)
         )
     ).first() or (0, None)
     documents_count, documents_updated = (

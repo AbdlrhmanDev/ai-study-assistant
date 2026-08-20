@@ -1,3 +1,5 @@
+import re
+
 import structlog
 from fastapi import BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -29,6 +31,18 @@ logger = structlog.get_logger("study_assistant")
 
 MODEL_HISTORY_LIMIT = 10
 SUPPORTED_IMAGE_CONTENT_TYPES = {"image/png", "image/jpeg", "image/webp"}
+_ARABIC_RE = re.compile(r"[\u0600-\u06ff]")
+_CJK_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]+")
+
+
+def _clean_mixed_script_answer(answer: str) -> str:
+    """Prevent unrelated CJK glyphs leaking into an otherwise Arabic answer."""
+    if not _ARABIC_RE.search(answer):
+        return answer.strip()
+    cleaned = _CJK_RE.sub("", answer)
+    cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
+    cleaned = re.sub(r" +([،,.!?؟])", r"\1", cleaned)
+    return cleaned.strip()
 
 
 def _serialize_message(message: ChatMessage) -> dict:
@@ -76,7 +90,7 @@ async def chat_with_tutor(
             "AI tutor is temporarily unavailable", 502, {"cause": str(error)}
         ) from error
 
-    answer = answer.strip()
+    answer = _clean_mixed_script_answer(answer)
     if not answer:
         raise EmptyAiResponseError()
 
@@ -157,7 +171,7 @@ async def chat_with_tutor_image(
             "AI tutor is temporarily unavailable", 502, {"cause": str(error)}
         ) from error
 
-    answer = answer.strip()
+    answer = _clean_mixed_script_answer(answer)
     if not answer:
         raise EmptyAiResponseError()
 

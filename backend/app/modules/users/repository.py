@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -29,8 +31,9 @@ async def update_profile(
         return None
     if name is not None:
         user.name = name
-    if email is not None:
+    if email is not None and email.lower() != user.email.lower():
         user.email = email
+        user.email_verified_at = None
     await db.flush()
     await db.refresh(user)
     return user
@@ -40,6 +43,12 @@ async def set_password_hash(db: AsyncSession, user_id: int, password_hash: str) 
     user = await db.get(User, user_id)
     if user is not None:
         user.password_hash = password_hash
+
+
+async def set_email_verified(db: AsyncSession, user_id: int, verified_at: datetime) -> None:
+    user = await db.get(User, user_id)
+    if user is not None:
+        user.email_verified_at = verified_at
 
 
 async def set_profile_image(

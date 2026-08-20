@@ -39,6 +39,21 @@ async def _generate_quiz(authed_client: AsyncClient, topic_id: int) -> dict:
     return response.json()
 
 
+async def test_list_all_quizzes_returns_user_quizzes_in_one_endpoint(
+    authed_client: AsyncClient, db_session: AsyncSession, test_user: User, mock_ai_generate
+):
+    mock_ai_generate(MOCK_QUIZ_RESPONSE)
+    topic = await _create_topic_with_note(db_session, test_user)
+    created = await _generate_quiz(authed_client, topic.id)
+
+    response = await authed_client.get("/api/v1/quizzes?limit=20")
+
+    assert response.status_code == 200
+    rows = response.json()["quizzes"]
+    assert [row["id"] for row in rows] == [created["quiz"]["id"]]
+    assert rows[0]["questionCount"] == 2
+
+
 async def test_generate_quiz_creates_quiz_and_questions(
     authed_client: AsyncClient, db_session: AsyncSession, test_user: User, mock_ai_generate
 ):

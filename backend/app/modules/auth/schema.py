@@ -25,3 +25,12 @@ class ProfileUpdate(StrictModel):
         if self.name is None and self.email is None:
             raise ValueError("At least one field is required")
         return self
+
+
+class ForgotPasswordIn(StrictModel):
+    email: EmailStr
+
+
+class ResetPasswordIn(StrictModel):
+    token: str = Field(min_length=1, max_length=200)
+    newPassword: str = Field(min_length=8, max_length=128)

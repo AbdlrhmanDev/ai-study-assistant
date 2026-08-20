@@ -16,6 +16,7 @@ class User(Base):
     profile_image_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
     profile_image_content_type: Mapped[str | None] = mapped_column(String(50), nullable=True)
     plan: Mapped[str] = mapped_column(String(20), nullable=False, server_default="beta")
+    email_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Header, status
+from fastapi import APIRouter, Header, Query, status
 
 from ...api.dependencies import CurrentUser, DbSession
 from ...core.idempotency import cache_artifact, get_cached_artifact, stable_artifact_key, with_idempotency
@@ -50,6 +50,30 @@ def _serialize_questions(entries: list[tuple[QuizQuestion, str | None, str | Non
 async def count_quizzes_by_topic(db: DbSession, user: CurrentUser):
     counts = await service.count_quizzes_by_topic(db, user["id"])
     return {"counts": counts}
+
+
+@router.get("/quizzes")
+async def list_all_quizzes(
+    db: DbSession,
+    user: CurrentUser,
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+):
+    entries = await service.list_quizzes_for_user(
+        db, user["id"], limit=limit, offset=offset
+    )
+    return {
+        "quizzes": [
+            {
+                **_serialize_quiz(entry["quiz"]),
+                "questionCount": entry["questionCount"],
+                "latestAttempt": service.serialize_attempt(entry["latestAttempt"])
+                if entry["latestAttempt"]
+                else None,
+            }
+            for entry in entries
+        ]
+    }
 
 
 @router.get("/topics/{topic_id}/quizzes")

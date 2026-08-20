@@ -395,6 +395,19 @@ async def list_quizzes(db: AsyncSession, topic_id: int, user_id: int) -> list[di
     ]
 
 
+async def list_quizzes_for_user(
+    db: AsyncSession, user_id: int, *, limit: int = 20, offset: int = 0
+) -> list[dict]:
+    quizzes = await repository.list_for_user(db, user_id, limit=limit, offset=offset)
+    quiz_ids = [quiz.id for quiz in quizzes]
+    counts = await repository.count_questions_by_quiz_ids(db, quiz_ids)
+    latest_attempts = await repository.latest_completed_attempts(db, quiz_ids, user_id)
+    return [
+        {"quiz": quiz, "questionCount": counts.get(quiz.id, 0), "latestAttempt": latest_attempts.get(quiz.id)}
+        for quiz in quizzes
+    ]
+
+
 async def count_quizzes_by_topic(db: AsyncSession, user_id: int) -> dict[int, int]:
     return await repository.count_by_topic_for_user(db, user_id)
 

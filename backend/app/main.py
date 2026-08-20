@@ -11,6 +11,7 @@ if sys.platform == "win32":
     # keep-alive ping). SelectorEventLoop is what asyncpg expects.
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.responses import Response
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
@@ -73,6 +74,7 @@ app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
 # wraps each add_middleware() call around the previous one), so the LAST call
 # here (CORS) runs FIRST on the way in / LAST on the way out.
 app.add_middleware(SlowAPIMiddleware)
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 app.add_middleware(SessionMiddleware)
 app.add_middleware(BodySizeLimitMiddleware, max_bytes=100_000)
 app.add_middleware(RequestContextMiddleware)

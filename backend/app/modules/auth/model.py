@@ -41,3 +41,42 @@ class UserSession(Base):
         Index("user_sessions_expires_at_index", "expires_at"),
         Index("user_sessions_user_id_index", "user_id"),
     )
+
+
+class EmailVerificationToken(Base):
+    """A pending "verify your email" link. Primary key is the SHA-256 hash
+    of the token that goes in the emailed URL, same reasoning as
+    `UserSession.id` -- a database leak can't be replayed as a live link."""
+
+    __tablename__ = "email_verification_tokens"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (Index("email_verification_tokens_user_id_index", "user_id"),)
+
+
+class PasswordResetToken(Base):
+    """A pending "reset your password" link. Single-use, enforced via
+    `used_at`: a token that's already been consumed (or superseded by a
+    newer request) is treated the same as expired/unknown."""
+
+    __tablename__ = "password_reset_tokens"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (Index("password_reset_tokens_user_id_index", "user_id"),)

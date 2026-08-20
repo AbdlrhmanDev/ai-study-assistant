@@ -4,6 +4,8 @@ from ...api.dependencies import CurrentUser, DbSession
 from ...core.config import get_settings
 from ...core.security import ai_rate_limit_key, limiter
 from ...shared.responses import no_content
+from ..topics import service as topics_service
+from ..topics.schema import TopicOut
 from . import service
 from .model import Document
 from .schema import ChatIn, DocumentOut, MessageFeedbackIn, SourceClickIn
@@ -11,6 +13,27 @@ from .schema import ChatIn, DocumentOut, MessageFeedbackIn, SourceClickIn
 router = APIRouter(tags=["ai"])
 
 _settings = get_settings()
+
+
+@router.get("/ai/bootstrap")
+async def get_tutor_bootstrap(
+    db: DbSession,
+    user: CurrentUser,
+    limit: int = Query(20, ge=1, le=50),
+):
+    """Load the tutor's topic list and initial conversation together."""
+    topics = await topics_service.list_topics(db, user["id"])
+    initial_topic_id = topics[0].id if topics else None
+    messages = (
+        await service.get_message_history(db, initial_topic_id, user["id"], limit)
+        if initial_topic_id is not None
+        else []
+    )
+    return {
+        "topics": [TopicOut.model_validate(topic).model_dump(mode="json") for topic in topics],
+        "initialTopicId": initial_topic_id,
+        "messages": messages,
+    }
 
 
 @router.post("/topics/{topic_id}/ai/chat", status_code=status.HTTP_201_CREATED)

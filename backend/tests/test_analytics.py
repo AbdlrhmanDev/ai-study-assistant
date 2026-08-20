@@ -23,6 +23,20 @@ async def test_overview_for_new_user_is_all_zeros(authed_client: AsyncClient):
     assert body["topics"] == []
 
 
+async def test_dashboard_overview_aggregates_home_data(authed_client: AsyncClient):
+    response = await authed_client.get("/api/v1/dashboard/overview")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert set(body) == {
+        "analytics", "flashcards", "flashcardsByTopic", "topics", "todayPlan", "goals", "noteCounts"
+    }
+    assert body["analytics"]["totalActivities"] == 0
+    assert body["topics"] == []
+    assert body["flashcardsByTopic"] == []
+    assert body["noteCounts"] == {}
+
+
 async def test_overview_reflects_topic_and_mastery_data(
     authed_client: AsyncClient, db_session: AsyncSession, test_user: User
 ):

@@ -62,6 +62,17 @@ def _new_token() -> str:
     return secrets.token_urlsafe(32)
 
 
+def new_opaque_token() -> str:
+    """Public generator for any other opaque bearer token stored only by its
+    hash (email verification links, password reset links) -- same shape as
+    a session token, exposed for reuse instead of duplicating it."""
+    return _new_token()
+
+
+def hash_opaque_token(token: str) -> str:
+    return _hash_token(token)
+
+
 def regenerate_session(request: Request) -> None:
     """Issue a fresh session id, invalidating the old one server-side.
 

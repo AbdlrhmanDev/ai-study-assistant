@@ -108,6 +108,22 @@ async def list_by_topic(db: AsyncSession, topic_id: int) -> list[Quiz]:
     return list(result.scalars().all())
 
 
+async def list_for_user(
+    db: AsyncSession, user_id: int, *, limit: int = 20, offset: int = 0
+) -> list[Quiz]:
+    """List a user's quizzes across all topics without per-topic queries."""
+    stmt = (
+        select(Quiz)
+        .join(Topic, Topic.id == Quiz.topic_id)
+        .where(Topic.user_id == user_id)
+        .order_by(Quiz.created_at.desc())
+        .offset(offset)
+        .limit(limit)
+    )
+    result = await db.execute(stmt)
+    return list(result.scalars().all())
+
+
 async def count_by_topic_for_user(db: AsyncSession, user_id: int) -> dict[int, int]:
     """Return every owned topic's quiz count in one database round trip."""
     stmt = (
